@@ -2,18 +2,21 @@
   "entities": {
     "Teacher": {
       "title": "Teacher",
-      "description": "Coach and teacher profile authenticated via Google",
+      "description": "Coach and teacher account registered via username/password or Google in Firebase",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "uid": { "type": "string" },
+        "username": { "type": "string" },
         "name": { "type": "string" },
+        "password": { "type": "string" },
         "email": { "type": "string" },
         "branch": { "type": "string" },
         "phone": { "type": "string" },
+        "authProvider": { "type": "string" },
         "createdAt": { "type": "string" }
       },
-      "required": ["id", "uid", "name", "email"]
+      "required": ["id", "name"]
     },
     "Classroom": {
       "title": "Classroom",

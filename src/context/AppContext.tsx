@@ -31,6 +31,7 @@ import {
   updateClassroomInFirestore,
   deleteClassroomFromFirestore,
   saveTeacherToFirestore,
+  deleteTeacherFromFirestore,
   saveActivityLogToFirestore,
   saveScheduleItemToFirestore,
   updateScheduleItemInFirestore,
@@ -68,8 +69,9 @@ interface AppContextType {
   setCurrentStudentId: (id: string) => void;
 
   // Authentication
-  loginTeacherWithGoogle: () => Promise<{ success: boolean; error?: string }>;
-  loginTeacherCredentials: (name: string, password: string, branch?: string) => Promise<{ success: boolean; error?: string; teacher?: Teacher }>;
+  loginTeacherWithGoogle: () => Promise<{ success: boolean; error?: string; teacher?: Teacher }>;
+  registerTeacherAccount: (params: { username: string; name: string; password: string; branch?: string }) => Promise<{ success: boolean; error?: string; teacher?: Teacher }>;
+  loginTeacherCredentials: (usernameOrName: string, password: string, branch?: string) => Promise<{ success: boolean; error?: string; teacher?: Teacher }>;
   loginStudentWithClassCode: (classCode: string, studentNumber: string, password: string) => Promise<{ success: boolean; message?: string; student?: Student }>;
   loginStudentDirect: (studentNumber: string, password: string) => Promise<{ success: boolean; message?: string; student?: Student }>;
   cloudLoginWithStudentCredentials: (studentNumber: string, password: string) => Promise<{ success: boolean; message?: string; student?: Student }>;
@@ -386,23 +388,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       setFirebaseUser(user);
       if (user) {
-        // Teacher logged in with Google
+        // Check if a password-based teacher session or student session is explicitly saved
+        let savedTch: Teacher | null = null;
+        let savedStd: Student | null = null;
+        try {
+          const tRaw = localStorage.getItem(`${STORAGE_PREFIX}teacher_session`);
+          if (tRaw) savedTch = JSON.parse(tRaw);
+          const sRaw = localStorage.getItem(`${STORAGE_PREFIX}student_session`);
+          if (sRaw) savedStd = JSON.parse(sRaw);
+        } catch {}
+
+        if (savedStd) {
+          setIsAuthReady(true);
+          return;
+        }
+        if (savedTch && savedTch.authProvider === 'password' && savedTch.id !== user.uid) {
+          setCurrentTeacher(savedTch);
+          setIsAuthReady(true);
+          return;
+        }
+
         const teacherName = user.displayName || user.email?.split('@')[0] || 'Öğretmen';
+        const defaultUsername = (user.email?.split('@')[0] || user.uid.slice(0, 6)).toLowerCase();
         const teacherProfile: Teacher = {
           id: user.uid,
           uid: user.uid,
-          name: teacherName,
+          username: savedTch?.id === user.uid && savedTch?.username ? savedTch.username : defaultUsername,
+          name: savedTch?.id === user.uid && savedTch?.name ? savedTch.name : teacherName,
           email: user.email || '',
           photoURL: user.photoURL || undefined,
-          branch: 'Koçluk & Rehberlik',
-          createdAt: new Date().toISOString()
+          branch: savedTch?.id === user.uid && savedTch?.branch ? savedTch.branch : 'Koçluk & Rehberlik',
+          authProvider: 'google',
+          createdAt: savedTch?.createdAt || new Date().toISOString()
         };
         setCurrentTeacher(teacherProfile);
         setRoleState('teacher');
         setSavedStudentSession(null);
         localStorage.removeItem(`${STORAGE_PREFIX}student_session`);
         localStorage.setItem(`${STORAGE_PREFIX}teacher_session`, JSON.stringify(teacherProfile));
-        // Sync teacher in firestore
         saveTeacherToFirestore(teacherProfile);
       }
       setIsAuthReady(true);
@@ -410,6 +433,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     return () => unsubscribeAuth();
   }, []);
+
+  // Keep currentTeacher synced with live Firestore updates
+  useEffect(() => {
+    if (!currentTeacher) return;
+    const liveTch = teachers.find(t => t.id === currentTeacher.id);
+    if (liveTch && (liveTch.name !== currentTeacher.name || liveTch.branch !== currentTeacher.branch || liveTch.username !== currentTeacher.username)) {
+      setCurrentTeacher(liveTch);
+      localStorage.setItem(`${STORAGE_PREFIX}teacher_session`, JSON.stringify(liveTch));
+    }
+  }, [teachers, currentTeacher]);
 
   // Current student object resolution
   const currentStudent = useMemo(() => {
@@ -438,7 +471,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Is logged in computation
   const isLoggedIn = useMemo(() => {
     if (role === 'teacher') {
-      return !!firebaseUser || !!currentTeacher;
+      return !!currentTeacher || !!firebaseUser;
     }
     if (role === 'student') {
       return !!savedStudentSession || !!currentStudent;
@@ -446,20 +479,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return false;
   }, [role, firebaseUser, currentTeacher, savedStudentSession, currentStudent]);
 
-  // Teacher Login with Google
+  // Teacher Login / Register with Google (Always opens Google Account Picker so different teachers can sign in)
   const loginTeacherWithGoogle = useCallback(async () => {
     try {
+      googleProvider.setCustomParameters({ prompt: 'select_account' });
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
-      const teacherName = user.displayName || user.email?.split('@')[0] || 'Öğretmen';
+      const existing = teachers.find(t => t.id === user.uid || t.uid === user.uid);
+      const teacherName = user.displayName || existing?.name || user.email?.split('@')[0] || 'Öğretmen';
+      const username = existing?.username || (user.email?.split('@')[0] || user.uid.slice(0, 6)).toLowerCase();
+
       const teacherProfile: Teacher = {
         id: user.uid,
         uid: user.uid,
+        username,
         name: teacherName,
-        email: user.email || '',
+        email: user.email || existing?.email || '',
         photoURL: user.photoURL || undefined,
-        branch: 'Koçluk & Rehberlik',
-        createdAt: new Date().toISOString()
+        branch: existing?.branch || 'Koçluk & Rehberlik',
+        authProvider: 'google',
+        createdAt: existing?.createdAt || new Date().toISOString()
       };
       await saveTeacherToFirestore(teacherProfile);
       setCurrentTeacher(teacherProfile);
@@ -472,59 +511,123 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.error('Google Sign-in failed:', err);
       return { success: false, error: err.message || 'Google girişi tamamlanamadı' };
     }
-  }, []);
+  }, [teachers]);
 
-  // Teacher Login with Name & Password
-  const loginTeacherCredentials = useCallback(async (name: string, password: string, branch?: string) => {
-    const cleanName = name.trim();
-    const cleanPass = password.trim();
+  // Register a brand new Teacher Account in Firebase with Username, Name, Password & Branch
+  const registerTeacherAccount = useCallback(async (params: {
+    username: string;
+    name: string;
+    password: string;
+    branch?: string;
+  }) => {
+    const cleanUsername = params.username.trim().toLowerCase().replace(/\s+/g, '');
+    const cleanName = params.name.trim();
+    const cleanPass = params.password.trim();
 
+    if (!cleanUsername || cleanUsername.length < 3) {
+      return { success: false, error: 'Kullanıcı adı en az 3 karakter olmalıdır.' };
+    }
     if (!cleanName || cleanName.length < 2) {
-      return { success: false, error: 'Lütfen ad ve soyadınızı eksiksiz girin.' };
+      return { success: false, error: 'Lütfen ad ve soyadınızı girin.' };
     }
     if (!cleanPass || cleanPass.length < 4) {
-      return { success: false, error: 'Öğretmen giriş şifresi en az 4 karakter olmalıdır.' };
+      return { success: false, error: 'Şifre en az 4 karakter olmalıdır.' };
     }
 
-    // Check if a teacher with this name already exists in Firestore teachers collection
-    const existing = teachers.find(t => t.name.trim().toLowerCase() === cleanName.toLowerCase());
-
-    if (existing) {
-      // If teacher has a password set, verify it
-      if (existing.password && existing.password !== cleanPass) {
-        return { success: false, error: 'Bu öğretmen adı için girilen şifre hatalı!' };
-      }
-      // If teacher did not have a password set yet, update it with this password
-      if (!existing.password) {
-        const updated = { ...existing, password: cleanPass };
-        await saveTeacherToFirestore(updated);
-      }
-
-      setCurrentTeacher(existing);
-      setRoleState('teacher');
-      setSavedStudentSession(null);
-      localStorage.setItem(`${STORAGE_PREFIX}teacher_session`, JSON.stringify(existing));
-      localStorage.removeItem(`${STORAGE_PREFIX}student_session`);
-      return { success: true, teacher: existing };
+    const duplicate = teachers.find(
+      t => (t.username || '').trim().toLowerCase() === cleanUsername
+    );
+    if (duplicate) {
+      return {
+        success: false,
+        error: `"${cleanUsername}" kullanıcı adı zaten kayıtlı. Lütfen farklı bir kullanıcı adı seçin veya Giriş Yap sekmesini kullanın.`
+      };
     }
 
-    // Otherwise register new teacher profile
+    // Sign out of any previous Google auth session so it doesn't override this teacher account
+    if (auth.currentUser) {
+      try {
+        await signOut(auth);
+      } catch {}
+    }
+
     const newId = `tch_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const newTeacher: Teacher = {
       id: newId,
+      username: cleanUsername,
       name: cleanName,
       password: cleanPass,
-      branch: branch?.trim() || 'Koçluk & Rehberlik',
+      branch: params.branch?.trim() || 'Koçluk & Rehberlik',
+      authProvider: 'password',
       createdAt: new Date().toISOString()
     };
 
     await saveTeacherToFirestore(newTeacher);
+    setTeachers(prev => [...prev.filter(t => t.id !== newId), newTeacher]);
     setCurrentTeacher(newTeacher);
     setRoleState('teacher');
     setSavedStudentSession(null);
     localStorage.setItem(`${STORAGE_PREFIX}teacher_session`, JSON.stringify(newTeacher));
     localStorage.removeItem(`${STORAGE_PREFIX}student_session`);
     return { success: true, teacher: newTeacher };
+  }, [teachers]);
+
+  // Teacher Login with Username (or Full Name) & Password
+  const loginTeacherCredentials = useCallback(async (usernameOrName: string, password: string, branch?: string) => {
+    const cleanQuery = usernameOrName.trim().toLowerCase();
+    const cleanPass = password.trim();
+
+    if (!cleanQuery || cleanQuery.length < 2) {
+      return { success: false, error: 'Lütfen kullanıcı adınızı (veya ad soyadınızı) girin.' };
+    }
+    if (!cleanPass || cleanPass.length < 4) {
+      return { success: false, error: 'Şifre en az 4 karakter olmalıdır.' };
+    }
+
+    // Match by username, name, or email
+    const existing = teachers.find(t => {
+      const uMatch = (t.username || '').trim().toLowerCase() === cleanQuery;
+      const nMatch = (t.name || '').trim().toLowerCase() === cleanQuery;
+      const eMatch = (t.email || '').trim().toLowerCase() === cleanQuery;
+      return uMatch || nMatch || eMatch;
+    });
+
+    if (!existing) {
+      return {
+        success: false,
+        error: 'Bu kullanıcı adına ait öğretmen hesabı bulunamadı. Yeni hesap açmak için "Kayıt Ol" sekmesini kullanın.'
+      };
+    }
+
+    if (existing.password && existing.password !== cleanPass) {
+      return { success: false, error: 'Girilen şifre hatalı!' };
+    }
+
+    // If this teacher had no password yet, set it
+    const updatedTeacher: Teacher = {
+      ...existing,
+      username: existing.username || cleanQuery.replace(/\s+/g, ''),
+      password: existing.password || cleanPass,
+      branch: existing.branch || branch || 'Koçluk & Rehberlik',
+      authProvider: existing.authProvider || 'password'
+    };
+
+    if (!existing.password || !existing.username) {
+      await saveTeacherToFirestore(updatedTeacher);
+    }
+
+    if (auth.currentUser && existing.uid !== auth.currentUser.uid) {
+      try {
+        await signOut(auth);
+      } catch {}
+    }
+
+    setCurrentTeacher(updatedTeacher);
+    setRoleState('teacher');
+    setSavedStudentSession(null);
+    localStorage.setItem(`${STORAGE_PREFIX}teacher_session`, JSON.stringify(updatedTeacher));
+    localStorage.removeItem(`${STORAGE_PREFIX}student_session`);
+    return { success: true, teacher: updatedTeacher };
   }, [teachers]);
 
   // Student Login with Class Code + 5-digit number + 4-digit password
@@ -712,7 +815,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const deleteTeacher = useCallback(async (id: string) => {
-    // delete
+    setTeachers(prev => prev.filter(t => t.id !== id));
+    await deleteTeacherFromFirestore(id);
   }, []);
 
   // Activity logger
@@ -1250,6 +1354,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         currentStudentId,
         setCurrentStudentId,
         loginTeacherWithGoogle,
+        registerTeacherAccount,
         loginTeacherCredentials,
         loginStudentWithClassCode,
         loginStudentDirect,

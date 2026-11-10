@@ -40,12 +40,14 @@ export interface Student {
 export interface Teacher {
   id: string;
   uid?: string; // Firebase Auth UID
+  username?: string; // Kullanıcı adı (örn: "ahmethoca")
   name: string;
   password?: string; // Öğretmen giriş şifresi
   email?: string;
   photoURL?: string; // Google Profil resmi
   branch?: string; // Branş: e.g. "Matematik", "Fizik", "Rehberlik & Koçluk"
   phone?: string;
+  authProvider?: 'password' | 'google';
   classroomIds?: string[];
   createdAt?: string;
 }

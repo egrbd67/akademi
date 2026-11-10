@@ -173,6 +173,15 @@ export async function saveTeacherToFirestore(teacher: Teacher) {
   }
 }
 
+export async function deleteTeacherFromFirestore(id: string) {
+  const path = `teachers/${id}`;
+  try {
+    await deleteDoc(doc(db, 'teachers', id));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
 // Activity Log
 export async function saveActivityLogToFirestore(activity: ActivityLog) {
   const path = `activities/${activity.id}`;

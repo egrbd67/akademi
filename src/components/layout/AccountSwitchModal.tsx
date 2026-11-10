@@ -2,28 +2,24 @@ import React, { useState, useMemo } from 'react';
 import {
   X,
   Users,
-  UserCheck,
   Shield,
   Search,
-  Key,
   Copy,
   Check,
   Flame,
-  Snowflake,
-  AlertTriangle,
-  Plus,
   RefreshCw,
   Layers,
   ArrowRight,
-  Sparkles,
-  Cloud,
   CheckCircle2,
   Lock,
   Hash,
-  GraduationCap
+  GraduationCap,
+  UserPlus,
+  LogIn,
+  User,
+  AlertTriangle
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { Student } from '../../types';
 import { getThemeStyles } from '../theme/ThemeCustomizerModal';
 
 interface AccountSwitchModalProps {
@@ -46,25 +42,35 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
     setCurrentStudentId,
     students,
     classrooms,
+    teachers,
     currentTeacher,
     isCloudSyncing,
     lastCloudSync,
     syncWithCloud,
     cloudLoginWithStudentCredentials,
     loginTeacherCredentials,
+    registerTeacherAccount,
+    loginTeacherWithGoogle,
     boxTheme
   } = useApp();
 
   const themeStyles = getThemeStyles(boxTheme);
 
-  const [activeTab, setActiveTab] = useState<'switch_list' | 'student_login' | 'teacher_login'>('switch_list');
+  const [activeTab, setActiveTab] = useState<'switch_list' | 'teacher_login' | 'student_login'>('switch_list');
+  const [teacherSubMode, setTeacherSubMode] = useState<'login' | 'register'>('login');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedClassFilter, setSelectedClassFilter] = useState<string>('ALL');
 
-  // Teacher name and password input state
-  const [teacherNameInput, setTeacherNameInput] = useState('');
+  // Teacher Login state
+  const [teacherUsernameInput, setTeacherUsernameInput] = useState('');
   const [teacherPasswordInput, setTeacherPasswordInput] = useState('');
-  const [teacherBranchInput, setTeacherBranchInput] = useState('Matematik');
+
+  // Teacher Register state
+  const [regTeacherName, setRegTeacherName] = useState('');
+  const [regTeacherUsername, setRegTeacherUsername] = useState('');
+  const [regTeacherPassword, setRegTeacherPassword] = useState('');
+  const [regTeacherBranch, setRegTeacherBranch] = useState('Matematik');
+
   const [teacherLoginError, setTeacherLoginError] = useState<string | null>(null);
   const [teacherLoginSuccess, setTeacherLoginSuccess] = useState<string | null>(null);
   const [isTeacherLoading, setIsTeacherLoading] = useState(false);
@@ -77,7 +83,6 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [copiedBadge, setCopiedBadge] = useState<string | null>(null);
 
-  // Initials generator (strictly no photos)
   const getInitials = (name: string) => {
     if (!name) return 'ÖG';
     const parts = name.trim().split(/\s+/);
@@ -85,7 +90,15 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   };
 
-  // Filter students based on search and classroom
+  // All registered teachers (merging currentTeacher if not yet in list)
+  const allTeachers = useMemo(() => {
+    const list = [...teachers];
+    if (currentTeacher && !list.some(t => t.id === currentTeacher.id)) {
+      list.unshift(currentTeacher);
+    }
+    return list;
+  }, [teachers, currentTeacher]);
+
   const filteredStudents = useMemo(() => {
     return students.filter(st => {
       const q = searchQuery.toLowerCase().trim();
@@ -101,28 +114,19 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
 
       if (selectedClassFilter !== 'ALL') {
         const studentClasses = st.classroomIds || [];
-        const isInSelectedClass = studentClasses.includes(selectedClassFilter);
-        if (!isInSelectedClass) return false;
+        if (!studentClasses.includes(selectedClassFilter)) return false;
       }
 
       return true;
     });
   }, [students, searchQuery, selectedClassFilter]);
 
-  // Switch to teacher
-  const handleSelectTeacher = () => {
-    setRole('teacher');
-    onClose();
-  };
-
-  // Switch to specific student
   const handleSelectStudent = (studentId: string) => {
     setCurrentStudentId(studentId);
     setRole('student');
     onClose();
   };
 
-  // Student 5-digit number and 4-digit password cloud login
   const handleStudentCredentialLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!studentNumberInput.trim() || !passwordInput.trim()) return;
@@ -137,24 +141,21 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
         passwordInput.trim()
       );
       if (res.success && res.student) {
-        setLoginSuccess(`Giriş başarılı! Hoş geldin, ${res.student.name}`);
-        setTimeout(() => {
-          onClose();
-        }, 600);
+        setLoginSuccess(`Giriş başarılı: ${res.student.name}`);
+        setTimeout(() => onClose(), 500);
       } else {
         setLoginError(res.message || 'Geçersiz 5 haneli Numara veya 4 haneli Şifre!');
       }
     } catch {
-      setLoginError('Bulut sunucusu ile bağlantı kurulamadı.');
+      setLoginError('Bağlantı hatası oluştu.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Teacher Name & Password login handler
   const handleTeacherCredentialLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!teacherNameInput.trim() || !teacherPasswordInput.trim()) return;
+    if (!teacherUsernameInput.trim() || !teacherPasswordInput.trim()) return;
 
     setTeacherLoginError(null);
     setTeacherLoginSuccess(null);
@@ -162,20 +163,68 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
 
     try {
       const res = await loginTeacherCredentials(
-        teacherNameInput.trim(),
-        teacherPasswordInput.trim(),
-        teacherBranchInput
+        teacherUsernameInput.trim(),
+        teacherPasswordInput.trim()
       );
       if (res.success && res.teacher) {
-        setTeacherLoginSuccess(`Giriş başarılı! Hoş geldiniz, Sn. ${res.teacher.name}`);
-        setTimeout(() => {
-          onClose();
-        }, 600);
+        setTeacherLoginSuccess(`Aktif öğretmen: ${res.teacher.name}`);
+        setTeacherPasswordInput('');
+        setTimeout(() => onClose(), 500);
       } else {
-        setTeacherLoginError(res.error || 'Giriş yapılamadı. Bilgilerinizi kontrol edin.');
+        setTeacherLoginError(res.error || 'Giriş yapılamadı.');
       }
     } catch {
-      setTeacherLoginError('Giriş yapılırken sunucu hatası oluştu.');
+      setTeacherLoginError('Giriş yapılırken hata oluştu.');
+    } finally {
+      setIsTeacherLoading(false);
+    }
+  };
+
+  const handleTeacherRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!regTeacherName.trim() || !regTeacherUsername.trim() || !regTeacherPassword.trim()) return;
+
+    setTeacherLoginError(null);
+    setTeacherLoginSuccess(null);
+    setIsTeacherLoading(true);
+
+    try {
+      const res = await registerTeacherAccount({
+        username: regTeacherUsername,
+        name: regTeacherName,
+        password: regTeacherPassword,
+        branch: regTeacherBranch
+      });
+      if (res.success && res.teacher) {
+        setTeacherLoginSuccess(`Yeni öğretmen hesabı açıldı: ${res.teacher.name}`);
+        setRegTeacherName('');
+        setRegTeacherUsername('');
+        setRegTeacherPassword('');
+        setTimeout(() => onClose(), 500);
+      } else {
+        setTeacherLoginError(res.error || 'Kayıt oluşturulamadı.');
+      }
+    } catch {
+      setTeacherLoginError('Kayıt sırasında hata oluştu.');
+    } finally {
+      setIsTeacherLoading(false);
+    }
+  };
+
+  const handleTeacherGoogleLogin = async () => {
+    setTeacherLoginError(null);
+    setTeacherLoginSuccess(null);
+    setIsTeacherLoading(true);
+    try {
+      const res = await loginTeacherWithGoogle();
+      if (res.success && res.teacher) {
+        setTeacherLoginSuccess(`Google ile bağlanıldı: ${res.teacher.name}`);
+        setTimeout(() => onClose(), 500);
+      } else {
+        setTeacherLoginError(res.error || 'Google girişi tamamlanamadı.');
+      }
+    } catch {
+      setTeacherLoginError('Google ile giriş yapılırken hata oluştu.');
     } finally {
       setIsTeacherLoading(false);
     }
@@ -194,58 +243,53 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
     <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-md animate-in fade-in select-none">
       <div className="w-full max-w-xl bg-white dark:bg-[#1C1C1E] rounded-3xl shadow-2xl border border-black/10 dark:border-white/10 overflow-hidden flex flex-col max-h-[88vh] my-auto">
         {/* Header */}
-        <div className="p-4 sm:p-6 border-b border-black/5 dark:border-white/5 flex items-center justify-between">
+        <div className="p-4 sm:p-5 border-b border-black/5 dark:border-white/5 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div
               style={{ backgroundColor: `${themeStyles.accentColor}18`, color: themeStyles.accentColor }}
-              className="w-10 h-10 rounded-2xl flex items-center justify-center font-bold"
+              className="w-9 h-9 rounded-xl flex items-center justify-center font-bold"
             >
-              <Users className="w-5 h-5" />
+              <Users className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base sm:text-lg font-bold text-neutral-900 dark:text-white">
-                Kullanıcı Değiştir ve Giriş
+              <h2 className="text-sm sm:text-base font-bold text-neutral-900 dark:text-white">
+                Hesap Yönetimi & Geçiş
               </h2>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>Bulut Canlı Senkron</span>
-                </span>
-                {lastCloudSync && (
-                  <span className="text-[10px] text-neutral-400">
-                    • {lastCloudSync}
-                  </span>
-                )}
-              </div>
+              {lastCloudSync && (
+                <div className="text-[10px] text-neutral-400">
+                  Senkron: {lastCloudSync}
+                </div>
+              )}
             </div>
           </div>
 
           <div className="flex items-center gap-1">
             <button
               onClick={() => syncWithCloud()}
-              className="p-2 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-400 hover:text-blue-500 transition-colors"
-              title="Bulutla Hemen Eşitle"
+              className="p-2 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-400 hover:text-blue-500 transition-colors cursor-pointer"
+              title="Senkronize Et"
             >
               <RefreshCw className={`w-4 h-4 ${isCloudSyncing ? 'animate-spin text-blue-500' : ''}`} />
             </button>
             <button
               onClick={onClose}
-              className="p-2 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors"
+              className="p-2 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        {/* Tab Selection: Öğretmen Girişi / Öğrenci Girişi / Kayıtlı Hesaplar */}
-        <div className="px-4 sm:px-6 pt-3">
-          <div className="flex p-1 rounded-2xl bg-neutral-100 dark:bg-neutral-900 border border-black/5 dark:border-white/5">
+        {/* Sekmeler */}
+        <div className="px-4 sm:px-5 pt-3">
+          <div className="flex p-1 rounded-xl bg-neutral-100 dark:bg-neutral-900 border border-black/5 dark:border-white/5">
             <button
               onClick={() => {
                 setActiveTab('switch_list');
                 setLoginError(null);
+                setTeacherLoginError(null);
               }}
-              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
+              className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'switch_list'
                   ? 'bg-white dark:bg-[#2C2C2E] text-neutral-900 dark:text-white shadow-xs'
                   : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
@@ -256,22 +300,22 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
             <button
               onClick={() => {
                 setActiveTab('teacher_login');
-                setLoginError(null);
+                setTeacherLoginError(null);
               }}
-              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
+              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'teacher_login'
-                  ? 'bg-white dark:bg-[#2C2C2E] text-neutral-900 dark:text-white shadow-xs'
+                  ? 'bg-white dark:bg-[#2C2C2E] text-indigo-600 dark:text-indigo-400 shadow-xs'
                   : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
               }`}
             >
-              Öğretmen Girişi
+              Öğretmen Giriş / Kayıt
             </button>
             <button
               onClick={() => {
                 setActiveTab('student_login');
                 setLoginError(null);
               }}
-              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${
+              className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'student_login'
                   ? 'bg-white dark:bg-[#2C2C2E] text-neutral-900 dark:text-white shadow-xs'
                   : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
@@ -282,61 +326,122 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
           </div>
         </div>
 
-        {/* Scrollable Body */}
-        <div className="p-4 sm:p-6 overflow-y-auto space-y-5 flex-1">
-          {/* TAB 1: KAYITLI HESAPLAR VE HIZLI GEÇİŞ LİSTESİ */}
+        {/* İçerik */}
+        <div className="p-4 sm:p-5 overflow-y-auto space-y-5 flex-1">
+          {/* SEKME 1: KAYITLI ÖĞRETMEN VE ÖĞRENCİ HESAPLARI */}
           {activeTab === 'switch_list' && (
             <div className="space-y-4">
-              {/* TEACHER ACCOUNT CARD */}
-              <div>
-                <div className="text-[10px] uppercase font-bold tracking-wider text-neutral-400 mb-2 px-1">
-                  Koç & Öğretmen Hesabı
-                </div>
-                <div
-                  onClick={handleSelectTeacher}
-                  className={`p-3.5 sm:p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
-                    role === 'teacher'
-                      ? 'bg-indigo-500/10 border-indigo-500/40 ring-1 ring-indigo-500/30'
-                      : 'bg-neutral-50 dark:bg-neutral-900/40 border-black/5 dark:border-white/5 hover:border-indigo-500/30'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-blue-500 text-white flex items-center justify-center font-bold text-sm shadow-md shadow-indigo-500/20 shrink-0">
-                      Ö
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-neutral-900 dark:text-white">
-                          Öğretmen & Rehberlik Koçu
-                        </span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-600 dark:text-indigo-400">
-                          Tam Yetki
-                        </span>
-                      </div>
-                      <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                        Tüm sınıfları, çalışma programlarını, ödevleri ve denemeleri yönetin
-                      </p>
-                    </div>
-                  </div>
-
-                  {role === 'teacher' ? (
-                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-xs shrink-0">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Aktif</span>
-                    </div>
-                  ) : (
-                    <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 shrink-0">
-                      Geçiş Yap →
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* REGISTERED STUDENTS LIST */}
+              {/* KAYITLI ÖĞRETMEN HESAPLARI (FIREBASE) */}
               <div>
                 <div className="flex items-center justify-between mb-2 px-1">
-                  <div className="text-[10px] uppercase font-bold tracking-wider text-neutral-400">
-                    Kayıtlı Öğrenci Hesapları ({students.length})
+                  <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">
+                    Öğretmen Hesapları ({allTeachers.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('teacher_login');
+                      setTeacherSubMode('register');
+                      setTeacherLoginError(null);
+                    }}
+                    className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>+ Yeni Öğretmen Hesabı Aç</span>
+                  </button>
+                </div>
+
+                {allTeachers.length === 0 ? (
+                  <div className="p-4 rounded-2xl bg-neutral-50 dark:bg-neutral-900/40 border border-dashed border-black/10 dark:border-white/10 flex items-center justify-between">
+                    <span className="text-xs text-neutral-500">Kayıtlı öğretmen hesabı yok.</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('teacher_login');
+                        setTeacherSubMode('register');
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer"
+                    >
+                      Hesap Oluştur
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {allTeachers.map(t => {
+                      const isCurrentActiveTeacher = role === 'teacher' && currentTeacher?.id === t.id;
+                      const isSavedCurrentTeacher = currentTeacher?.id === t.id;
+
+                      return (
+                        <div
+                          key={t.id}
+                          onClick={() => {
+                            if (isSavedCurrentTeacher) {
+                              setRole('teacher');
+                              onClose();
+                            } else if (t.authProvider === 'google' && !t.password) {
+                              setActiveTab('teacher_login');
+                              setTeacherSubMode('login');
+                            } else {
+                              setActiveTab('teacher_login');
+                              setTeacherSubMode('login');
+                              setTeacherUsernameInput(t.username || t.name);
+                              setTeacherPasswordInput('');
+                              setTeacherLoginError(null);
+                            }
+                          }}
+                          className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
+                            isCurrentActiveTeacher
+                              ? 'bg-indigo-500/10 border-indigo-500/40'
+                              : 'bg-neutral-50 dark:bg-neutral-900/40 border-black/5 dark:border-white/5 hover:border-indigo-500/30'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shrink-0">
+                              {getInitials(t.name)}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-xs sm:text-sm text-neutral-900 dark:text-white truncate">
+                                  {t.name}
+                                </span>
+                                {t.username && (
+                                  <span className="text-[10px] font-mono text-neutral-400">
+                                    @{t.username}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-neutral-500 flex items-center gap-2">
+                                <span>{t.branch || 'Öğretmen'}</span>
+                                <span>•</span>
+                                <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">
+                                  {t.authProvider === 'google' ? 'Google Hesabı' : 'Kullanıcı Adı'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {isCurrentActiveTeacher ? (
+                            <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-xs shrink-0 flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Aktif</span>
+                            </span>
+                          ) : (
+                            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 shrink-0">
+                              {isSavedCurrentTeacher ? 'Geçiş Yap →' : 'Giriş Yap →'}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* KAYITLI ÖĞRENCİ HESAPLARI */}
+              <div>
+                <div className="flex items-center justify-between mb-2 px-1">
+                  <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">
+                    Öğrenci Hesapları ({students.length})
                   </div>
                   {role === 'teacher' && onOpenClassroomsModal && (
                     <button
@@ -347,12 +452,11 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
                       className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
                     >
                       <Layers className="w-3.5 h-3.5" />
-                      <span>Sınıfları Yönet</span>
+                      <span>Sınıflar</span>
                     </button>
                   )}
                 </div>
 
-                {/* Search and Classroom Filter Bar */}
                 {students.length > 0 && (
                   <div className="space-y-2 mb-3">
                     <div className="relative">
@@ -361,31 +465,30 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
                         type="text"
                         value={searchQuery}
                         onChange={e => setSearchQuery(e.target.value)}
-                        placeholder="İsim, 5 haneli Numara veya 4 haneli şifre ara..."
-                        className="w-full pl-9 pr-3 py-2 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-xs font-medium text-neutral-900 dark:text-white border border-black/5 dark:border-white/5 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Öğrenci ara..."
+                        className="w-full pl-9 pr-3 py-2 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-xs font-medium text-neutral-900 dark:text-white border border-black/5 dark:border-white/5 focus:outline-none"
                       />
                     </div>
 
-                    {/* Classroom Filter Chips if any classrooms exist */}
                     {classrooms.length > 0 && (
                       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
                         <button
                           onClick={() => setSelectedClassFilter('ALL')}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-all ${
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap ${
                             selectedClassFilter === 'ALL'
                               ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
                               : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400'
                           }`}
                         >
-                          Tüm Sınıflar
+                          Tümü
                         </button>
                         {classrooms.map(c => (
                           <button
                             key={c.id}
                             onClick={() => setSelectedClassFilter(c.id)}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-all flex items-center gap-1 ${
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap flex items-center gap-1 ${
                               selectedClassFilter === c.id
-                                ? 'bg-blue-500 text-white shadow-xs'
+                                ? 'bg-blue-500 text-white'
                                 : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400'
                             }`}
                           >
@@ -398,36 +501,18 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
                   </div>
                 )}
 
-                {/* Students List Feed */}
                 {students.length === 0 ? (
-                  <div className="p-6 text-center rounded-2xl border border-dashed border-black/10 dark:border-white/10 bg-neutral-50 dark:bg-neutral-900/40 space-y-2">
-                    <Users className="w-8 h-8 text-neutral-400 mx-auto" />
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                      Henüz sisteme kayıtlı öğrenci bulunmuyor.
-                    </p>
-                    {role === 'teacher' && (
-                      <button
-                        onClick={() => {
-                          onClose();
-                          onNavigateTab('users');
-                        }}
-                        className="px-4 py-2 rounded-xl bg-blue-600 text-white font-bold text-xs"
-                      >
-                        + İlk Öğrenciyi Ekle
-                      </button>
-                    )}
+                  <div className="p-5 text-center rounded-2xl border border-dashed border-black/10 dark:border-white/10 text-xs text-neutral-400">
+                    Henüz kayıtlı öğrenci yok.
                   </div>
                 ) : filteredStudents.length === 0 ? (
-                  <div className="p-6 text-center text-xs text-neutral-400 bg-neutral-50 dark:bg-neutral-900/40 rounded-2xl">
-                    Aramanıza uygun öğrenci bulunamadı.
+                  <div className="p-5 text-center text-xs text-neutral-400">
+                    Öğrenci bulunamadı.
                   </div>
                 ) : (
-                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                     {filteredStudents.map(st => {
                       const isCurrent = role === 'student' && currentStudentId === st.id;
-                      const stClasses = classrooms.filter(c =>
-                        (st.classroomIds || []).includes(c.id) || (c.studentIds || []).includes(st.id)
-                      );
                       const stdNo = st.studentNumber || st.pin.substring(0, 5);
                       const stdPass = st.password || st.pin.substring(st.pin.length - 4);
 
@@ -437,13 +522,12 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
                           onClick={() => handleSelectStudent(st.id)}
                           className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
                             isCurrent
-                              ? 'bg-blue-500/10 border-blue-500/40 ring-1 ring-blue-500/30'
+                              ? 'bg-blue-500/10 border-blue-500/40'
                               : 'bg-neutral-50 dark:bg-neutral-900/40 border-black/5 dark:border-white/5 hover:border-blue-500/30'
                           }`}
                         >
                           <div className="flex items-center gap-3 min-w-0">
-                            {/* Monogram Badge (NO PHOTO) */}
-                            <div className="w-10 h-10 rounded-2xl bg-neutral-900 text-white dark:bg-neutral-800 flex items-center justify-center font-bold text-xs tracking-wider shrink-0">
+                            <div className="w-9 h-9 rounded-xl bg-neutral-900 text-white dark:bg-neutral-800 flex items-center justify-center font-bold text-xs shrink-0">
                               {getInitials(st.name)}
                             </div>
 
@@ -460,15 +544,10 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
                                 )}
                               </div>
 
-                              <div className="flex items-center gap-2 flex-wrap text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                <span className="font-medium text-blue-600 dark:text-blue-400">{st.targetExam}</span>
-                                <span>•</span>
-
-                                {/* 5-digit Student Number badge */}
+                              <div className="flex items-center gap-2 flex-wrap text-[11px] text-neutral-500 mt-0.5">
                                 <span
                                   onClick={e => handleCopy(e, stdNo, 'no')}
-                                  className="font-mono font-bold bg-neutral-200/80 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-[10px] text-neutral-800 dark:text-neutral-200 hover:bg-neutral-300 dark:hover:bg-neutral-700 transition-colors inline-flex items-center gap-1 cursor-pointer"
-                                  title="5 Haneli Numarayı Kopyala"
+                                  className="font-mono font-bold bg-neutral-200/80 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-[10px] text-neutral-800 dark:text-neutral-200 inline-flex items-center gap-1"
                                 >
                                   No: {stdNo}
                                   {copiedBadge === `no-${stdNo}` ? (
@@ -478,11 +557,9 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
                                   )}
                                 </span>
 
-                                {/* 4-digit Password badge */}
                                 <span
                                   onClick={e => handleCopy(e, stdPass, 'pw')}
-                                  className="font-mono font-bold bg-neutral-200/80 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-[10px] text-neutral-800 dark:text-neutral-200 hover:bg-neutral-300 dark:hover:bg-neutral-700 transition-colors inline-flex items-center gap-1 cursor-pointer"
-                                  title="4 Haneli Şifreyi Kopyala"
+                                  className="font-mono font-bold bg-neutral-200/80 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-[10px] text-neutral-800 dark:text-neutral-200 inline-flex items-center gap-1"
                                 >
                                   Şifre: {stdPass}
                                   {copiedBadge === `pw-${stdPass}` ? (
@@ -492,24 +569,6 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
                                   )}
                                 </span>
                               </div>
-
-                              {/* Enrolled Classrooms Badges */}
-                              {stClasses.length > 0 && (
-                                <div className="flex items-center gap-1 flex-wrap mt-1">
-                                  {stClasses.map(c => (
-                                    <span
-                                      key={c.id}
-                                      className="text-[9px] font-bold px-1.5 py-0.2 rounded-md"
-                                      style={{
-                                        backgroundColor: `${c.color || '#3B82F6'}18`,
-                                        color: c.color || '#3B82F6'
-                                      }}
-                                    >
-                                      {c.name}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
                             </div>
                           </div>
 
@@ -522,10 +581,7 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
                               <span>Aktif</span>
                             </div>
                           ) : (
-                            <span
-                              style={{ color: 'inherit' }}
-                              className="text-xs font-semibold text-neutral-400 hover:opacity-80 shrink-0"
-                            >
+                            <span className="text-xs font-semibold text-neutral-400 shrink-0">
                               Seç →
                             </span>
                           )}
@@ -538,163 +594,268 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
             </div>
           )}
 
-          {/* TAB 2: ÖĞRETMEN GİRİŞİ (AD SOYAD VE ŞİFRE İLE) */}
+          {/* SEKME 2: ÖĞRETMEN GİRİŞİ VEYA YENİ ÖĞRETMEN KAYDI */}
           {activeTab === 'teacher_login' && (
-            <form onSubmit={handleTeacherCredentialLogin} className="p-4 sm:p-6 rounded-3xl bg-neutral-50 dark:bg-neutral-900/60 border border-black/5 dark:border-white/5 space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold">
-                  <Shield className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-base text-neutral-900 dark:text-white">
-                    Öğretmen Bilgileri ile Giriş
-                  </h3>
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                    Öğretmen ad soyadınızı ve şifrenizi girerek giriş yapın.
-                  </p>
-                </div>
+            <div className="p-4 sm:p-5 rounded-2xl bg-neutral-50 dark:bg-neutral-900/60 border border-black/5 dark:border-white/5 space-y-4">
+              {/* Alt Seçim: Giriş Yap / Yeni Hesap Aç */}
+              <div className="flex p-1 rounded-xl bg-neutral-200/70 dark:bg-neutral-800 text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTeacherSubMode('login');
+                    setTeacherLoginError(null);
+                  }}
+                  className={`flex-1 py-2 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer ${
+                    teacherSubMode === 'login'
+                      ? 'bg-white dark:bg-[#2C2C2E] text-indigo-600 dark:text-indigo-400 shadow-2xs'
+                      : 'text-neutral-500'
+                  }`}
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>Öğretmen Girişi</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTeacherSubMode('register');
+                    setTeacherLoginError(null);
+                  }}
+                  className={`flex-1 py-2 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer ${
+                    teacherSubMode === 'register'
+                      ? 'bg-white dark:bg-[#2C2C2E] text-indigo-600 dark:text-indigo-400 shadow-2xs'
+                      : 'text-neutral-500'
+                  }`}
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>Yeni Öğretmen Kaydı</span>
+                </button>
               </div>
 
-              {/* Already logged in banner if currentTeacher exists */}
-              {role === 'teacher' && currentTeacher && (
-                <div className="p-3 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-between text-xs">
+              {teacherSubMode === 'login' ? (
+                <form onSubmit={handleTeacherCredentialLogin} className="space-y-3">
                   <div>
-                    <div className="font-bold text-indigo-700 dark:text-indigo-300">
-                      Mevcut Hesap: {currentTeacher.name}
-                    </div>
-                    <div className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                      Branş: {currentTeacher.branch || 'Öğretmen'} • Aktif
+                    <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1">
+                      Kullanıcı Adı veya Ad Soyad
+                    </label>
+                    <div className="relative">
+                      <User className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        required
+                        value={teacherUsernameInput}
+                        onChange={e => {
+                          setTeacherUsernameInput(e.target.value);
+                          setTeacherLoginError(null);
+                        }}
+                        placeholder="kullaniciadi"
+                        className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 text-xs font-semibold text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
                     </div>
                   </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1">
+                      Şifre
+                    </label>
+                    <div className="relative">
+                      <Lock className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="password"
+                        required
+                        value={teacherPasswordInput}
+                        onChange={e => {
+                          setTeacherPasswordInput(e.target.value);
+                          setTeacherLoginError(null);
+                        }}
+                        placeholder="••••"
+                        className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 text-xs font-semibold text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+
+                  {teacherLoginError && (
+                    <div className="p-2.5 rounded-xl bg-rose-500/15 text-rose-600 dark:text-rose-400 text-xs font-semibold flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>{teacherLoginError}</span>
+                    </div>
+                  )}
+
+                  {teacherLoginSuccess && (
+                    <div className="p-2.5 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>{teacherLoginSuccess}</span>
+                    </div>
+                  )}
+
                   <button
-                    type="button"
-                    onClick={onClose}
-                    className="px-3 py-1.5 rounded-xl bg-indigo-600 text-white font-bold text-xs"
+                    type="submit"
+                    disabled={isTeacherLoading || !teacherUsernameInput.trim() || !teacherPasswordInput.trim()}
+                    className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    Devam Et
+                    <Shield className="w-4 h-4" />
+                    <span>{isTeacherLoading ? 'Doğrulanıyor...' : 'Öğretmen Hesabına Giriş Yap'}</span>
                   </button>
-                </div>
+                </form>
+              ) : (
+                <form onSubmit={handleTeacherRegister} className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1">
+                        Ad Soyad *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={regTeacherName}
+                        onChange={e => {
+                          setRegTeacherName(e.target.value);
+                          setTeacherLoginError(null);
+                        }}
+                        placeholder="Ad Soyad"
+                        className="w-full p-2.5 rounded-xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 text-xs font-semibold text-neutral-900 dark:text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1">
+                        Kullanıcı Adı *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={regTeacherUsername}
+                        onChange={e => {
+                          setRegTeacherUsername(e.target.value.toLowerCase().replace(/\s+/g, ''));
+                          setTeacherLoginError(null);
+                        }}
+                        placeholder="kullaniciadi"
+                        className="w-full p-2.5 rounded-xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 text-xs font-mono font-bold text-neutral-900 dark:text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1">
+                        Şifre (En az 4 karakter) *
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        value={regTeacherPassword}
+                        onChange={e => {
+                          setRegTeacherPassword(e.target.value);
+                          setTeacherLoginError(null);
+                        }}
+                        placeholder="••••"
+                        className="w-full p-2.5 rounded-xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 text-xs font-mono text-neutral-900 dark:text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1">
+                        Branş
+                      </label>
+                      <select
+                        value={regTeacherBranch}
+                        onChange={e => setRegTeacherBranch(e.target.value)}
+                        className="w-full p-2.5 rounded-xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 text-xs font-semibold text-neutral-900 dark:text-white"
+                      >
+                        <option value="Matematik">Matematik</option>
+                        <option value="Geometri">Geometri</option>
+                        <option value="Fizik">Fizik</option>
+                        <option value="Kimya">Kimya</option>
+                        <option value="Biyoloji">Biyoloji</option>
+                        <option value="Türkçe & Edebiyat">Türkçe & Edebiyat</option>
+                        <option value="Tarih & Coğrafya">Tarih & Coğrafya</option>
+                        <option value="Yabancı Dil">Yabancı Dil</option>
+                        <option value="Rehberlik & Koçluk">Rehberlik & Koçluk</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {teacherLoginError && (
+                    <div className="p-2.5 rounded-xl bg-rose-500/15 text-rose-600 dark:text-rose-400 text-xs font-semibold flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>{teacherLoginError}</span>
+                    </div>
+                  )}
+
+                  {teacherLoginSuccess && (
+                    <div className="p-2.5 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>{teacherLoginSuccess}</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={isTeacherLoading || !regTeacherName.trim() || regTeacherUsername.trim().length < 3 || regTeacherPassword.trim().length < 4}
+                    className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>{isTeacherLoading ? 'Kaydediliyor...' : 'Yeni Öğretmen Hesabı Oluştur'}</span>
+                  </button>
+                </form>
               )}
 
-              <div className="space-y-3">
-                {/* Öğretmen Adı Soyadı */}
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1 flex items-center gap-1">
-                    <Users className="w-3.5 h-3.5 text-indigo-500" />
-                    <span>Öğretmen Adı Soyadı *</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={teacherNameInput}
-                    onChange={e => {
-                      setTeacherNameInput(e.target.value);
-                      setTeacherLoginError(null);
-                    }}
-                    placeholder="Örn: Ahmet Yılmaz"
-                    className="w-full p-3 rounded-2xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 text-xs font-semibold text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {/* Giriş Şifresi */}
-                  <div>
-                    <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1 flex items-center gap-1">
-                      <Lock className="w-3.5 h-3.5 text-indigo-500" />
-                      <span>Giriş Şifresi *</span>
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      value={teacherPasswordInput}
-                      onChange={e => {
-                        setTeacherPasswordInput(e.target.value);
-                        setTeacherLoginError(null);
-                      }}
-                      placeholder="En az 4 karakter"
-                      className="w-full p-3 rounded-2xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 text-xs font-semibold text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              {/* Google ile Farklı Öğretmen Hesabı Seç / Aç */}
+              <div className="pt-2 border-t border-black/5 dark:border-white/5">
+                <button
+                  type="button"
+                  onClick={handleTeacherGoogleLogin}
+                  disabled={isTeacherLoading}
+                  className="w-full py-2.5 px-4 rounded-xl bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24">
+                    <path
+                      fill="currentColor"
+                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
                     />
-                  </div>
-
-                  {/* Branş */}
-                  <div>
-                    <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1 flex items-center gap-1">
-                      <GraduationCap className="w-3.5 h-3.5 text-indigo-500" />
-                      <span>Branş</span>
-                    </label>
-                    <select
-                      value={teacherBranchInput}
-                      onChange={e => setTeacherBranchInput(e.target.value)}
-                      className="w-full p-3 rounded-2xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 text-xs font-semibold text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      <option value="Matematik">Matematik</option>
-                      <option value="Geometri">Geometri</option>
-                      <option value="Fizik">Fizik</option>
-                      <option value="Kimya">Kimya</option>
-                      <option value="Biyoloji">Biyoloji</option>
-                      <option value="Türkçe & Edebiyat">Türkçe & Edebiyat</option>
-                      <option value="Tarih">Tarih</option>
-                      <option value="Coğrafya">Coğrafya</option>
-                      <option value="Felsefe">Felsefe</option>
-                      <option value="Yabancı Dil">Yabancı Dil</option>
-                      <option value="Rehberlik & Koçluk">Rehberlik & Koçluk</option>
-                    </select>
-                  </div>
-                </div>
+                    <path
+                      fill="currentColor"
+                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                    />
+                    <path
+                      fill="currentColor"
+                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                    />
+                    <path
+                      fill="currentColor"
+                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                    />
+                  </svg>
+                  <span>Google Hesabı Seçerek Bağlan</span>
+                </button>
               </div>
-
-              {teacherLoginError && (
-                <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-semibold flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4 shrink-0" />
-                  <span>{teacherLoginError}</span>
-                </div>
-              )}
-
-              {teacherLoginSuccess && (
-                <div className="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span>{teacherLoginSuccess}</span>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={isTeacherLoading || !teacherNameInput.trim() || !teacherPasswordInput.trim()}
-                className="w-full py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-sm shadow-md shadow-indigo-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
-              >
-                <Shield className="w-4 h-4" />
-                <span>{isTeacherLoading ? 'Doğrulanıyor...' : 'Öğretmen Olarak Giriş Yap'}</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </form>
+            </div>
           )}
 
-          {/* TAB 3: ÖĞRENCİ GİRİŞİ (5 HANELİ NUMARA + 4 HANELİ ŞİFRE) */}
+          {/* SEKME 3: ÖĞRENCİ GİRİŞİ */}
           {activeTab === 'student_login' && (
-            <form onSubmit={handleStudentCredentialLogin} className="p-4 sm:p-6 rounded-3xl bg-neutral-50 dark:bg-neutral-900/60 border border-black/5 dark:border-white/5 space-y-4">
+            <form onSubmit={handleStudentCredentialLogin} className="p-4 sm:p-5 rounded-2xl bg-neutral-50 dark:bg-neutral-900/60 border border-black/5 dark:border-white/5 space-y-4">
               <div className="flex items-center gap-3">
                 <div
                   style={{ backgroundColor: `${themeStyles.accentColor}18`, color: themeStyles.accentColor }}
-                  className="w-12 h-12 rounded-2xl flex items-center justify-center font-bold"
+                  className="w-10 h-10 rounded-xl flex items-center justify-center font-bold"
                 >
-                  <GraduationCap className="w-6 h-6" />
+                  <GraduationCap className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-base text-neutral-900 dark:text-white">
-                    Öğrenci Bilgileri ile Giriş
+                  <h3 className="font-bold text-sm text-neutral-900 dark:text-white">
+                    Öğrenci Girişi
                   </h3>
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                    Öğretmeninizin size verdiği 5 haneli numara ve 4 haneli şifrenizi girin.
+                  <p className="text-xs text-neutral-500">
+                    5 haneli numara ve 4 haneli şifrenizi girin.
                   </p>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* 5-Haneli Numara */}
                 <div>
-                  <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1.5 flex items-center gap-1">
+                  <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1 flex items-center gap-1">
                     <Hash className="w-3.5 h-3.5 text-blue-500" />
-                    <span>5 Haneli Öğrenci No *</span>
+                    <span>5 Haneli Öğrenci No</span>
                   </label>
                   <input
                     type="text"
@@ -704,42 +865,41 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
                       setStudentNumberInput(e.target.value.replace(/\D/g, ''));
                       setLoginError(null);
                     }}
-                    placeholder="Örn: 10482"
-                    className="w-full p-3 rounded-2xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 text-center font-mono text-lg font-bold tracking-widest text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="10000"
+                    className="w-full p-2.5 rounded-xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 text-center font-mono text-base font-bold tracking-widest text-neutral-900 dark:text-white"
                     required
                   />
                 </div>
 
-                {/* 4-Haneli Şifre */}
                 <div>
-                  <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1.5 flex items-center gap-1">
+                  <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1 flex items-center gap-1">
                     <Lock className="w-3.5 h-3.5 text-blue-500" />
-                    <span>4 Haneli Şifre *</span>
+                    <span>4 Haneli Şifre</span>
                   </label>
                   <input
-                    type="text"
+                    type="password"
                     maxLength={4}
                     value={passwordInput}
                     onChange={e => {
                       setPasswordInput(e.target.value.replace(/\D/g, ''));
                       setLoginError(null);
                     }}
-                    placeholder="Örn: 3821"
-                    className="w-full p-3 rounded-2xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 text-center font-mono text-lg font-bold tracking-widest text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="••••"
+                    className="w-full p-2.5 rounded-xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 text-center font-mono text-base font-bold tracking-widest text-neutral-900 dark:text-white"
                     required
                   />
                 </div>
               </div>
 
               {loginError && (
-                <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-semibold flex items-center gap-1.5">
+                <div className="p-2.5 rounded-xl bg-rose-500/15 text-rose-600 dark:text-rose-400 text-xs font-semibold flex items-center gap-1.5">
                   <AlertTriangle className="w-4 h-4 shrink-0" />
                   <span>{loginError}</span>
                 </div>
               )}
 
               {loginSuccess && (
-                <div className="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-1.5">
+                <div className="p-2.5 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 shrink-0" />
                   <span>{loginSuccess}</span>
                 </div>
@@ -749,23 +909,21 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
                 type="submit"
                 disabled={isLoading || studentNumberInput.length < 5 || passwordInput.length < 4}
                 style={themeStyles.primaryBtn}
-                className="w-full py-3.5 rounded-2xl disabled:opacity-50 text-white font-bold text-sm transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                className="w-full py-3 rounded-xl disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 cursor-pointer"
               >
                 <span>{isLoading ? 'Doğrulanıyor...' : 'Öğrenci Girişi Yap'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
-
-              <p className="text-[11px] text-neutral-400 text-center">
-                Numaranızı veya şifrenizi unuttuysanız öğretmeniniz "Kayıtlı Hesaplar" listesinden size tekrar iletebilir.
-              </p>
             </form>
           )}
         </div>
 
-        {/* Footer Actions */}
+        {/* Footer */}
         <div className="p-3.5 sm:p-4 border-t border-black/5 dark:border-white/5 flex items-center justify-between gap-2 bg-neutral-50/50 dark:bg-neutral-900/30">
-          <div className="text-[11px] text-neutral-400">
-            {role === 'teacher' ? '👨‍🏫 Öğretmen Modu Açık' : '👤 Öğrenci Modu Açık'}
+          <div className="text-xs text-neutral-500 font-semibold truncate">
+            {role === 'teacher'
+              ? `Aktif Öğretmen: ${currentTeacher?.name || '-'}`
+              : 'Öğrenci Modu'}
           </div>
 
           <div className="flex items-center gap-2">
@@ -775,17 +933,17 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
                   onClose();
                   onNavigateTab('users');
                 }}
-                className="px-3 py-1.5 rounded-xl bg-neutral-200/80 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 text-xs font-bold hover:bg-neutral-300 transition-colors"
+                className="px-3 py-1.5 rounded-xl bg-neutral-200/80 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 text-xs font-bold cursor-pointer"
               >
-                + Yeni Öğrenci Ekle
+                + Öğrenci Ekle
               </button>
             )}
             <button
               onClick={onClose}
               style={themeStyles.primaryBtn}
-              className="px-4 py-1.5 rounded-xl text-white text-xs font-bold cursor-pointer transition-all active:scale-95"
+              className="px-4 py-1.5 rounded-xl text-white text-xs font-bold cursor-pointer"
             >
-              Tamam
+              Kapat
             </button>
           </div>
         </div>
