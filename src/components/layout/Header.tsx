@@ -341,7 +341,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="Hesaptan Güvenli Çıkış Yap"
           >
             <LogOut className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Çıkış Yap</span>
+            <span>Çıkış Yap</span>
           </button>
         </div>
       </div>

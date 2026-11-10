@@ -21,8 +21,6 @@ export const AuthScreen: React.FC = () => {
     loginTeacherCredentials,
     loginStudentWithClassCode,
     loginStudentDirect,
-    classrooms,
-    teachers,
     boxTheme
   } = useApp();
 
@@ -438,39 +436,6 @@ export const AuthScreen: React.FC = () => {
                 </svg>
                 <span>Google Hesabı Seçerek {teacherMode === 'register' ? 'Kayıt Ol' : 'Giriş Yap'}</span>
               </button>
-
-              {/* Kayıtlı Öğretmen Hesapları (Hızlı Seçim) */}
-              {teachers.length > 0 && (
-                <div className="pt-3 border-t border-black/5 dark:border-white/5 space-y-2">
-                  <div className="text-[11px] font-bold text-neutral-400">
-                    Kayıtlı Öğretmen Hesapları ({teachers.length})
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {teachers.map(t => (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => {
-                          if (t.authProvider === 'google' && !t.password) {
-                            handleTeacherGoogle();
-                          } else {
-                            setTeacherMode('login');
-                            setLoginUsername(t.username || t.name);
-                            setErrorMsg(null);
-                          }
-                        }}
-                        className="px-2.5 py-1.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 hover:bg-indigo-500/10 text-neutral-800 dark:text-neutral-200 text-xs font-semibold flex items-center gap-1.5 border border-black/5 dark:border-white/5 cursor-pointer"
-                      >
-                        <span className="w-5 h-5 rounded-md bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center">
-                          {t.name.substring(0, 1).toUpperCase()}
-                        </span>
-                        <span>{t.name}</span>
-                        {t.username && <span className="text-[10px] text-neutral-400 font-mono">@{t.username}</span>}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
@@ -563,25 +528,6 @@ export const AuthScreen: React.FC = () => {
                 <span>{isLoading ? 'Giriş Yapılıyor...' : 'Öğrenci Girişi Yap'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
-
-              {classrooms.length > 0 && !isDirectLogin && (
-                <div className="pt-3 border-t border-black/5 dark:border-white/5 space-y-1.5 text-xs">
-                  <div className="text-[10px] font-bold text-neutral-400 uppercase">
-                    Mevcut Sınıf Kodları:
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {classrooms.slice(0, 4).map(c => (
-                      <span
-                        key={c.id}
-                        onClick={() => setClassCode(c.code || '')}
-                        className="px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 font-mono text-[11px] font-bold text-blue-600 dark:text-blue-400 cursor-pointer"
-                      >
-                        {c.name}: {c.code}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
             </form>
           )}
         </div>

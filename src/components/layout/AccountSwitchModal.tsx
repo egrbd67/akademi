@@ -16,6 +16,7 @@ import {
   GraduationCap,
   UserPlus,
   LogIn,
+  LogOut,
   User,
   AlertTriangle
 } from 'lucide-react';
@@ -40,10 +41,11 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
     setRole,
     currentStudentId,
     setCurrentStudentId,
+    currentStudent,
     students,
     classrooms,
-    teachers,
     currentTeacher,
+    logout,
     isCloudSyncing,
     lastCloudSync,
     syncWithCloud,
@@ -89,15 +91,6 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
     if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   };
-
-  // All registered teachers (merging currentTeacher if not yet in list)
-  const allTeachers = useMemo(() => {
-    const list = [...teachers];
-    if (currentTeacher && !list.some(t => t.id === currentTeacher.id)) {
-      list.unshift(currentTeacher);
-    }
-    return list;
-  }, [teachers, currentTeacher]);
 
   const filteredStudents = useMemo(() => {
     return students.filter(st => {
@@ -295,7 +288,7 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
                   : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
               }`}
             >
-              Kayıtlı Hesaplar
+              Aktif Oturum
             </button>
             <button
               onClick={() => {
@@ -328,269 +321,257 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
 
         {/* İçerik */}
         <div className="p-4 sm:p-5 overflow-y-auto space-y-5 flex-1">
-          {/* SEKME 1: KAYITLI ÖĞRETMEN VE ÖĞRENCİ HESAPLARI */}
+          {/* SEKME 1: AKTİF HESAP & ÖĞRETMENİN KENDİ ÖĞRENCİLERİ */}
           {activeTab === 'switch_list' && (
             <div className="space-y-4">
-              {/* KAYITLI ÖĞRETMEN HESAPLARI (FIREBASE) */}
+              {/* AKTİF HESAP KARTI */}
               <div>
                 <div className="flex items-center justify-between mb-2 px-1">
                   <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">
-                    Öğretmen Hesapları ({allTeachers.length})
+                    Aktif Hesabınız
                   </span>
                   <button
                     type="button"
                     onClick={() => {
-                      setActiveTab('teacher_login');
-                      setTeacherSubMode('register');
-                      setTeacherLoginError(null);
+                      logout();
+                      onClose();
                     }}
-                    className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+                    className="text-xs font-bold text-rose-600 dark:text-rose-400 hover:underline flex items-center gap-1 cursor-pointer"
                   >
-                    <UserPlus className="w-3.5 h-3.5" />
-                    <span>+ Yeni Öğretmen Hesabı Aç</span>
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Hesaptan Çıkış Yap</span>
                   </button>
                 </div>
 
-                {allTeachers.length === 0 ? (
-                  <div className="p-4 rounded-2xl bg-neutral-50 dark:bg-neutral-900/40 border border-dashed border-black/10 dark:border-white/10 flex items-center justify-between">
-                    <span className="text-xs text-neutral-500">Kayıtlı öğretmen hesabı yok.</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveTab('teacher_login');
-                        setTeacherSubMode('register');
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-bold cursor-pointer"
-                    >
-                      Hesap Oluştur
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                    {allTeachers.map(t => {
-                      const isCurrentActiveTeacher = role === 'teacher' && currentTeacher?.id === t.id;
-                      const isSavedCurrentTeacher = currentTeacher?.id === t.id;
-
-                      return (
-                        <div
-                          key={t.id}
-                          onClick={() => {
-                            if (isSavedCurrentTeacher) {
-                              setRole('teacher');
-                              onClose();
-                            } else if (t.authProvider === 'google' && !t.password) {
-                              setActiveTab('teacher_login');
-                              setTeacherSubMode('login');
-                            } else {
-                              setActiveTab('teacher_login');
-                              setTeacherSubMode('login');
-                              setTeacherUsernameInput(t.username || t.name);
-                              setTeacherPasswordInput('');
-                              setTeacherLoginError(null);
-                            }
-                          }}
-                          className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
-                            isCurrentActiveTeacher
-                              ? 'bg-indigo-500/10 border-indigo-500/40'
-                              : 'bg-neutral-50 dark:bg-neutral-900/40 border-black/5 dark:border-white/5 hover:border-indigo-500/30'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shrink-0">
-                              {getInitials(t.name)}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="font-bold text-xs sm:text-sm text-neutral-900 dark:text-white truncate">
-                                  {t.name}
-                                </span>
-                                {t.username && (
-                                  <span className="text-[10px] font-mono text-neutral-400">
-                                    @{t.username}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-[11px] text-neutral-500 flex items-center gap-2">
-                                <span>{t.branch || 'Öğretmen'}</span>
-                                <span>•</span>
-                                <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">
-                                  {t.authProvider === 'google' ? 'Google Hesabı' : 'Kullanıcı Adı'}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {isCurrentActiveTeacher ? (
-                            <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-xs shrink-0 flex items-center gap-1">
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>Aktif</span>
-                            </span>
-                          ) : (
-                            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 shrink-0">
-                              {isSavedCurrentTeacher ? 'Geçiş Yap →' : 'Giriş Yap →'}
+                {currentTeacher ? (
+                  <div
+                    onClick={() => {
+                      if (role !== 'teacher') {
+                        setRole('teacher');
+                        onClose();
+                      }
+                    }}
+                    className={`p-3.5 rounded-2xl border transition-all flex items-center justify-between ${
+                      role === 'teacher'
+                        ? 'bg-indigo-500/10 border-indigo-500/40'
+                        : 'bg-neutral-50 dark:bg-neutral-900/40 border-black/5 dark:border-white/5 hover:border-indigo-500/30 cursor-pointer'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shrink-0">
+                        {getInitials(currentTeacher.name)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-xs sm:text-sm text-neutral-900 dark:text-white truncate">
+                            {currentTeacher.name}
+                          </span>
+                          {currentTeacher.username && (
+                            <span className="text-[10px] font-mono text-neutral-400">
+                              @{currentTeacher.username}
                             </span>
                           )}
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* KAYITLI ÖĞRENCİ HESAPLARI */}
-              <div>
-                <div className="flex items-center justify-between mb-2 px-1">
-                  <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">
-                    Öğrenci Hesapları ({students.length})
-                  </div>
-                  {role === 'teacher' && onOpenClassroomsModal && (
-                    <button
-                      onClick={() => {
-                        onClose();
-                        onOpenClassroomsModal();
-                      }}
-                      className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
-                    >
-                      <Layers className="w-3.5 h-3.5" />
-                      <span>Sınıflar</span>
-                    </button>
-                  )}
-                </div>
-
-                {students.length > 0 && (
-                  <div className="space-y-2 mb-3">
-                    <div className="relative">
-                      <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
-                      <input
-                        type="text"
-                        value={searchQuery}
-                        onChange={e => setSearchQuery(e.target.value)}
-                        placeholder="Öğrenci ara..."
-                        className="w-full pl-9 pr-3 py-2 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-xs font-medium text-neutral-900 dark:text-white border border-black/5 dark:border-white/5 focus:outline-none"
-                      />
+                        <div className="text-[11px] text-neutral-500 flex items-center gap-2">
+                          <span>{currentTeacher.branch || 'Öğretmen'}</span>
+                          <span>•</span>
+                          <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">
+                            Kişisel Öğretmen Hesabı (Gizli Veri Alanı)
+                          </span>
+                        </div>
+                      </div>
                     </div>
 
-                    {classrooms.length > 0 && (
-                      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-                        <button
-                          onClick={() => setSelectedClassFilter('ALL')}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap ${
-                            selectedClassFilter === 'ALL'
-                              ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                              : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400'
-                          }`}
-                        >
-                          Tümü
-                        </button>
-                        {classrooms.map(c => (
+                    {role === 'teacher' ? (
+                      <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-xs shrink-0 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Aktif</span>
+                      </span>
+                    ) : (
+                      <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 shrink-0">
+                        Öğretmen Paneline Dön →
+                      </span>
+                    )}
+                  </div>
+                ) : currentStudent ? (
+                  <div className="p-3.5 rounded-2xl border bg-blue-500/10 border-blue-500/40 flex items-center justify-between">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-neutral-900 text-white dark:bg-neutral-800 flex items-center justify-center font-bold text-xs shrink-0">
+                        {getInitials(currentStudent.name)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-bold text-xs sm:text-sm text-neutral-900 dark:text-white truncate">
+                          {currentStudent.name}
+                        </div>
+                        <div className="text-[11px] text-neutral-500 font-mono">
+                          Öğrenci No: {currentStudent.studentNumber || currentStudent.pin.substring(0, 5)}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold text-xs shrink-0 flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Aktif Öğrenci</span>
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* SADECE AKTİF ÖĞRETMENİN KENDİ ÖĞRENCİLERİ (Öğretmen oturumu açıksa gösterilir) */}
+              {currentTeacher && (
+                <div>
+                  <div className="flex items-center justify-between mb-2 px-1">
+                    <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">
+                      Sizin Öğrencileriniz ({students.length})
+                    </div>
+                    {role === 'teacher' && onOpenClassroomsModal && (
+                      <button
+                        onClick={() => {
+                          onClose();
+                          onOpenClassroomsModal();
+                        }}
+                        className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                        <span>Sınıflarım</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {students.length > 0 && (
+                    <div className="space-y-2 mb-3">
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
+                        <input
+                          type="text"
+                          value={searchQuery}
+                          onChange={e => setSearchQuery(e.target.value)}
+                          placeholder="Öğrencileriniz arasında ara..."
+                          className="w-full pl-9 pr-3 py-2 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-xs font-medium text-neutral-900 dark:text-white border border-black/5 dark:border-white/5 focus:outline-none"
+                        />
+                      </div>
+
+                      {classrooms.length > 0 && (
+                        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
                           <button
-                            key={c.id}
-                            onClick={() => setSelectedClassFilter(c.id)}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap flex items-center gap-1 ${
-                              selectedClassFilter === c.id
-                                ? 'bg-blue-500 text-white'
+                            onClick={() => setSelectedClassFilter('ALL')}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap ${
+                              selectedClassFilter === 'ALL'
+                                ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
                                 : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400'
                             }`}
                           >
-                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c.color || '#3B82F6' }} />
-                            <span>{c.name}</span>
+                            Tümü
                           </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {students.length === 0 ? (
-                  <div className="p-5 text-center rounded-2xl border border-dashed border-black/10 dark:border-white/10 text-xs text-neutral-400">
-                    Henüz kayıtlı öğrenci yok.
-                  </div>
-                ) : filteredStudents.length === 0 ? (
-                  <div className="p-5 text-center text-xs text-neutral-400">
-                    Öğrenci bulunamadı.
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                    {filteredStudents.map(st => {
-                      const isCurrent = role === 'student' && currentStudentId === st.id;
-                      const stdNo = st.studentNumber || st.pin.substring(0, 5);
-                      const stdPass = st.password || st.pin.substring(st.pin.length - 4);
-
-                      return (
-                        <div
-                          key={st.id}
-                          onClick={() => handleSelectStudent(st.id)}
-                          className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
-                            isCurrent
-                              ? 'bg-blue-500/10 border-blue-500/40'
-                              : 'bg-neutral-50 dark:bg-neutral-900/40 border-black/5 dark:border-white/5 hover:border-blue-500/30'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-9 h-9 rounded-xl bg-neutral-900 text-white dark:bg-neutral-800 flex items-center justify-center font-bold text-xs shrink-0">
-                              {getInitials(st.name)}
-                            </div>
-
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="font-bold text-xs sm:text-sm text-neutral-900 dark:text-white truncate">
-                                  {st.name}
-                                </span>
-                                {st.streak.status === 'active' && st.streak.count > 0 && (
-                                  <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-amber-500">
-                                    <Flame className="w-3 h-3 fill-amber-500" />
-                                    {st.streak.count}G
-                                  </span>
-                                )}
-                              </div>
-
-                              <div className="flex items-center gap-2 flex-wrap text-[11px] text-neutral-500 mt-0.5">
-                                <span
-                                  onClick={e => handleCopy(e, stdNo, 'no')}
-                                  className="font-mono font-bold bg-neutral-200/80 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-[10px] text-neutral-800 dark:text-neutral-200 inline-flex items-center gap-1"
-                                >
-                                  No: {stdNo}
-                                  {copiedBadge === `no-${stdNo}` ? (
-                                    <Check className="w-2.5 h-2.5 text-emerald-500" />
-                                  ) : (
-                                    <Copy className="w-2.5 h-2.5 opacity-60" />
-                                  )}
-                                </span>
-
-                                <span
-                                  onClick={e => handleCopy(e, stdPass, 'pw')}
-                                  className="font-mono font-bold bg-neutral-200/80 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-[10px] text-neutral-800 dark:text-neutral-200 inline-flex items-center gap-1"
-                                >
-                                  Şifre: {stdPass}
-                                  {copiedBadge === `pw-${stdPass}` ? (
-                                    <Check className="w-2.5 h-2.5 text-emerald-500" />
-                                  ) : (
-                                    <Copy className="w-2.5 h-2.5 opacity-60" />
-                                  )}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {isCurrent ? (
-                            <div
-                              style={{ backgroundColor: `${themeStyles.accentColor}18`, color: themeStyles.accentColor }}
-                              className="flex items-center gap-1 px-2.5 py-1 rounded-full font-bold text-xs shrink-0"
+                          {classrooms.map(c => (
+                            <button
+                              key={c.id}
+                              onClick={() => setSelectedClassFilter(c.id)}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap flex items-center gap-1 ${
+                                selectedClassFilter === c.id
+                                  ? 'bg-blue-500 text-white'
+                                  : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400'
+                              }`}
                             >
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>Aktif</span>
-                            </div>
-                          ) : (
-                            <span className="text-xs font-semibold text-neutral-400 shrink-0">
-                              Seç →
-                            </span>
-                          )}
+                              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: c.color || '#3B82F6' }} />
+                              <span>{c.name}</span>
+                            </button>
+                          ))}
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+                      )}
+                    </div>
+                  )}
+
+                  {students.length === 0 ? (
+                    <div className="p-5 text-center rounded-2xl border border-dashed border-black/10 dark:border-white/10 text-xs text-neutral-400">
+                      Henüz hesabınıza kayıtlı öğrenci yok.
+                    </div>
+                  ) : filteredStudents.length === 0 ? (
+                    <div className="p-5 text-center text-xs text-neutral-400">
+                      Öğrenci bulunamadı.
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                      {filteredStudents.map(st => {
+                        const isCurrent = role === 'student' && currentStudentId === st.id;
+                        const stdNo = st.studentNumber || st.pin.substring(0, 5);
+                        const stdPass = st.password || st.pin.substring(st.pin.length - 4);
+
+                        return (
+                          <div
+                            key={st.id}
+                            onClick={() => handleSelectStudent(st.id)}
+                            className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
+                              isCurrent
+                                ? 'bg-blue-500/10 border-blue-500/40'
+                                : 'bg-neutral-50 dark:bg-neutral-900/40 border-black/5 dark:border-white/5 hover:border-blue-500/30'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-9 h-9 rounded-xl bg-neutral-900 text-white dark:bg-neutral-800 flex items-center justify-center font-bold text-xs shrink-0">
+                                {getInitials(st.name)}
+                              </div>
+
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-xs sm:text-sm text-neutral-900 dark:text-white truncate">
+                                    {st.name}
+                                  </span>
+                                  {st.streak.status === 'active' && st.streak.count > 0 && (
+                                    <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-amber-500">
+                                      <Flame className="w-3 h-3 fill-amber-500" />
+                                      {st.streak.count}G
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-2 flex-wrap text-[11px] text-neutral-500 mt-0.5">
+                                  <span
+                                    onClick={e => handleCopy(e, stdNo, 'no')}
+                                    className="font-mono font-bold bg-neutral-200/80 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-[10px] text-neutral-800 dark:text-neutral-200 inline-flex items-center gap-1"
+                                  >
+                                    No: {stdNo}
+                                    {copiedBadge === `no-${stdNo}` ? (
+                                      <Check className="w-2.5 h-2.5 text-emerald-500" />
+                                    ) : (
+                                      <Copy className="w-2.5 h-2.5 opacity-60" />
+                                    )}
+                                  </span>
+
+                                  <span
+                                    onClick={e => handleCopy(e, stdPass, 'pw')}
+                                    className="font-mono font-bold bg-neutral-200/80 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-[10px] text-neutral-800 dark:text-neutral-200 inline-flex items-center gap-1"
+                                  >
+                                    Şifre: {stdPass}
+                                    {copiedBadge === `pw-${stdPass}` ? (
+                                      <Check className="w-2.5 h-2.5 text-emerald-500" />
+                                    ) : (
+                                      <Copy className="w-2.5 h-2.5 opacity-60" />
+                                    )}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {isCurrent ? (
+                              <div
+                                style={{ backgroundColor: `${themeStyles.accentColor}18`, color: themeStyles.accentColor }}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-full font-bold text-xs shrink-0"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>Aktif</span>
+                              </div>
+                            ) : (
+                              <span className="text-xs font-semibold text-neutral-400 shrink-0">
+                                Öğrenci Görünümü →
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -927,6 +908,16 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                logout();
+                onClose();
+              }}
+              className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-center gap-1 cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Çıkış Yap</span>
+            </button>
             {role === 'teacher' && (
               <button
                 onClick={() => {

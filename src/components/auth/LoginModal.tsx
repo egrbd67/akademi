@@ -4,7 +4,6 @@ import { useApp } from '../../context/AppContext';
 
 export const LoginModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
   const {
-    students,
     setRole,
     setCurrentStudentId,
     cloudLoginWithStudentCredentials,
@@ -100,12 +99,6 @@ export const LoginModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleQuickStudentSelect = (studentId: string) => {
-    setRole('student');
-    setCurrentStudentId(studentId);
-    onClose();
   };
 
   return (
@@ -209,29 +202,6 @@ export const LoginModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
               <span>{isLoading ? 'Doğrulanıyor...' : 'Giriş Yap'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
-
-            {students.length > 0 && (
-              <div className="pt-3 border-t border-black/5 dark:border-white/5 text-left">
-                <span className="text-[11px] font-bold text-neutral-400 uppercase block mb-2">
-                  Kayıtlı Öğrenciler:
-                </span>
-                <div className="space-y-1.5 max-h-36 overflow-y-auto">
-                  {students.map(st => (
-                    <button
-                      key={st.id}
-                      type="button"
-                      onClick={() => handleQuickStudentSelect(st.id)}
-                      className="w-full flex items-center justify-between p-2 rounded-xl bg-neutral-50 dark:bg-neutral-800/60 hover:bg-neutral-100 text-xs text-neutral-800 dark:text-neutral-200 cursor-pointer"
-                    >
-                      <span className="font-semibold">{st.name}</span>
-                      <span className="font-mono text-[11px] text-neutral-400">
-                        No: {st.studentNumber || st.pin.substring(0, 5)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </form>
         )}
 
