@@ -1,0 +1,6 @@
+{
+  "name": "Akademi Takip - Koçluk Portali",
+  "description": "Öğretmen ve öğrenciler için gerçek zamanlı çalışma programı, sayaç, deneme analizi ve ödev takip sistemi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

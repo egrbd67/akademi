@@ -1,0 +1,214 @@
+{
+  "entities": {
+    "Teacher": {
+      "title": "Teacher",
+      "description": "Coach and teacher profile authenticated via Google",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "branch": { "type": "string" },
+        "phone": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "uid", "name", "email"]
+    },
+    "Classroom": {
+      "title": "Classroom",
+      "description": "Classroom or coaching group created by teacher with join code",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "teacherUid": { "type": "string" },
+        "code": { "type": "string" },
+        "name": { "type": "string" },
+        "grade": { "type": "string" },
+        "branch": { "type": "string" },
+        "color": { "type": "string" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "teacherUid", "code", "name"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Student profile enrolled by teacher or joined with code",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "teacherUid": { "type": "string" },
+        "studentNumber": { "type": "string" },
+        "password": { "type": "string" },
+        "pin": { "type": "string" },
+        "name": { "type": "string" },
+        "targetExam": { "type": "string" },
+        "targetExamDate": { "type": "string" },
+        "targetGoal": { "type": "string" },
+        "phone": { "type": "string" },
+        "notes": { "type": "string" },
+        "classroomIds": { "type": "array" },
+        "streak": { "type": "object" },
+        "createdAt": { "type": "string" },
+        "lastActiveAt": { "type": "string" }
+      },
+      "required": ["id", "teacherUid", "studentNumber", "password", "name"]
+    },
+    "ScheduleItem": {
+      "title": "ScheduleItem",
+      "description": "Weekly schedule session item assigned to a student",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "teacherUid": { "type": "string" },
+        "dayOfWeek": { "type": "number" },
+        "sessionNumber": { "type": "number" },
+        "timeRange": { "type": "string" },
+        "subject": { "type": "string" },
+        "topic": { "type": "string" },
+        "sourceBook": { "type": "string" },
+        "targetType": { "type": "string" },
+        "targetValue": { "type": "number" },
+        "actualDurationMinutes": { "type": "number" },
+        "solvedQuestions": { "type": "object" },
+        "teacherNote": { "type": "string" },
+        "status": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "studentId", "dayOfWeek", "subject", "topic"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Real-time action log of student activities delivered to teacher",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "teacherUid": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "detail": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "studentId", "teacherUid", "type", "title"]
+    },
+    "Homework": {
+      "title": "Homework",
+      "description": "Homework assigned to student by teacher",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "teacherUid": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "subject": { "type": "string" },
+        "topic": { "type": "string" },
+        "sourceBook": { "type": "string" },
+        "targetQuestionCount": { "type": "number" },
+        "dueDate": { "type": "string" },
+        "status": { "type": "string" },
+        "studentSubmission": { "type": "object" },
+        "teacherFeedback": { "type": "string" }
+      },
+      "required": ["id", "studentId", "title", "subject", "dueDate"]
+    },
+    "TrialExam": {
+      "title": "TrialExam",
+      "description": "Practice / trial exam record and error analysis",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "teacherUid": { "type": "string" },
+        "title": { "type": "string" },
+        "date": { "type": "string" },
+        "examType": { "type": "string" },
+        "sections": { "type": "array" },
+        "totalCorrect": { "type": "number" },
+        "totalWrong": { "type": "number" },
+        "totalBlank": { "type": "number" },
+        "totalNet": { "type": "number" },
+        "errors": { "type": "array" }
+      },
+      "required": ["id", "studentId", "title", "date", "totalNet"]
+    },
+    "FocusSession": {
+      "title": "FocusSession",
+      "description": "Focus mode and integrated timer session sent to teacher",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "teacherUid": { "type": "string" },
+        "subject": { "type": "string" },
+        "topic": { "type": "string" },
+        "durationMinutes": { "type": "number" },
+        "durationSeconds": { "type": "number" },
+        "mode": { "type": "string" },
+        "solvedQuestions": { "type": "object" },
+        "studentNote": { "type": "string" },
+        "completedAt": { "type": "string" },
+        "sentToTeacher": { "type": "boolean" }
+      },
+      "required": ["id", "studentId", "subject", "durationMinutes"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Announcements made by teachers for their students and classrooms",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "teacherUid": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "date": { "type": "string" },
+        "authorName": { "type": "string" },
+        "urgent": { "type": "boolean" }
+      },
+      "required": ["id", "title", "content"]
+    }
+  },
+  "firestore": {
+    "/teachers/{teacherId}": {
+      "schema": { "$ref": "Teacher" },
+      "description": "Teacher profiles"
+    },
+    "/classrooms/{classroomId}": {
+      "schema": { "$ref": "Classroom" },
+      "description": "Classrooms and coaching groups"
+    },
+    "/students/{studentId}": {
+      "schema": { "$ref": "Student" },
+      "description": "Student profiles and credentials"
+    },
+    "/schedules/{scheduleId}": {
+      "schema": { "$ref": "ScheduleItem" },
+      "description": "Weekly study schedule sessions"
+    },
+    "/activities/{activityId}": {
+      "schema": { "$ref": "ActivityLog" },
+      "description": "Student activity audit stream"
+    },
+    "/homeworks/{homeworkId}": {
+      "schema": { "$ref": "Homework" },
+      "description": "Homework tasks"
+    },
+    "/trialExams/{examId}": {
+      "schema": { "$ref": "TrialExam" },
+      "description": "Trial exam score records"
+    },
+    "/focusSessions/{sessionId}": {
+      "schema": { "$ref": "FocusSession" },
+      "description": "Focus and timer study logs"
+    },
+    "/announcements/{announcementId}": {
+      "schema": { "$ref": "Announcement" },
+      "description": "Teacher announcements"
+    }
+  }
+}

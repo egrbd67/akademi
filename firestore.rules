@@ -1,0 +1,75 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Teachers collection
+    match /teachers/{teacherId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Classrooms collection
+    match /classrooms/{classroomId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Students collection
+    match /students/{studentId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Schedules collection
+    match /schedules/{scheduleId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Activities / Audit stream
+    match /activities/{activityId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Homeworks collection
+    match /homeworks/{homeworkId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Trial Exams collection
+    match /trialExams/{examId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Focus Sessions collection
+    match /focusSessions/{sessionId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Announcements collection
+    match /announcements/{announcementId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Assigned Exams collection
+    match /assigned_exams/{examId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}
+

@@ -1,0 +1,1349 @@
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import confetti from 'canvas-confetti';
+import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
+import { auth, googleProvider, testFirestoreConnection } from '../firebase';
+import {
+  Role,
+  Student,
+  Teacher,
+  Classroom,
+  ScheduleItem,
+  ScheduleTemplate,
+  TrialExam,
+  Homework,
+  Announcement,
+  NotificationItem,
+  ActiveTimerSession,
+  SolvedQuestions,
+  FocusSession,
+  ActivityLog,
+  BackgroundTheme,
+  BoxColorTheme,
+  StreakStatus,
+  AssignedExam
+} from '../types';
+import {
+  subscribeToCollection,
+  saveStudentToFirestore,
+  updateStudentInFirestore,
+  deleteStudentFromFirestore,
+  saveClassroomToFirestore,
+  updateClassroomInFirestore,
+  deleteClassroomFromFirestore,
+  saveTeacherToFirestore,
+  saveActivityLogToFirestore,
+  saveScheduleItemToFirestore,
+  updateScheduleItemInFirestore,
+  deleteScheduleItemFromFirestore,
+  saveHomeworkToFirestore,
+  updateHomeworkInFirestore,
+  saveFocusSessionToFirestore,
+  saveAnnouncementToFirestore,
+  updateAnnouncementInFirestore,
+  deleteAnnouncementFromFirestore,
+  saveAssignedExamToFirestore,
+  deleteAssignedExamFromFirestore,
+  saveTrialExamToFirestore,
+  deleteTrialExamFromFirestore
+} from '../services/firestoreService';
+
+interface QuestionEntryState {
+  isOpen: boolean;
+  scheduleItemId?: string;
+  homeworkId?: string;
+  durationMinutes: number;
+  subject: string;
+  topic: string;
+}
+
+interface AppContextType {
+  role: Role;
+  setRole: (role: Role) => void;
+  isLoggedIn: boolean;
+  isAuthReady: boolean;
+  firebaseUser: User | null;
+  currentTeacher: Teacher | null;
+  currentStudent: Student | undefined;
+  currentStudentId: string;
+  setCurrentStudentId: (id: string) => void;
+
+  // Authentication
+  loginTeacherWithGoogle: () => Promise<{ success: boolean; error?: string }>;
+  loginTeacherCredentials: (name: string, password: string, branch?: string) => Promise<{ success: boolean; error?: string; teacher?: Teacher }>;
+  loginStudentWithClassCode: (classCode: string, studentNumber: string, password: string) => Promise<{ success: boolean; message?: string; student?: Student }>;
+  loginStudentDirect: (studentNumber: string, password: string) => Promise<{ success: boolean; message?: string; student?: Student }>;
+  cloudLoginWithStudentCredentials: (studentNumber: string, password: string) => Promise<{ success: boolean; message?: string; student?: Student }>;
+  logout: () => Promise<void>;
+
+  // Theme
+  isDarkMode: boolean;
+  toggleDarkMode: () => void;
+  bgTheme: BackgroundTheme;
+  setBgTheme: (theme: BackgroundTheme) => void;
+  boxTheme: BoxColorTheme;
+  setBoxTheme: (theme: BoxColorTheme) => void;
+
+  // Students
+  students: Student[];
+  addStudent: (data: Omit<Student, 'id' | 'streak'>) => Promise<string>;
+  updateStudent: (id: string, updates: Partial<Student>) => Promise<void>;
+  deleteStudent: (id: string) => Promise<void>;
+
+  // Classrooms
+  classrooms: Classroom[];
+  addClassroom: (data: Omit<Classroom, 'id' | 'createdAt'>) => Promise<string>;
+  updateClassroom: (id: string, updates: Partial<Classroom>) => Promise<void>;
+  deleteClassroom: (id: string) => Promise<void>;
+  assignStudentToClassrooms: (studentId: string, classroomIds: string[]) => Promise<void>;
+
+  // Teachers
+  teachers: Teacher[];
+  addTeacher: (data: Omit<Teacher, 'id'>) => Promise<string>;
+  updateTeacher: (id: string, updates: Partial<Teacher>) => Promise<void>;
+  deleteTeacher: (id: string) => Promise<void>;
+
+  // Activity stream
+  activities: ActivityLog[];
+  logActivity: (data: Omit<ActivityLog, 'id' | 'timestamp'>) => Promise<void>;
+
+  // Schedule
+  schedules: ScheduleItem[];
+  addScheduleItem: (item: Omit<ScheduleItem, 'id'>) => Promise<string>;
+  updateScheduleItem: (id: string, updates: Partial<ScheduleItem>) => Promise<void>;
+  deleteScheduleItem: (id: string) => Promise<void>;
+
+  // Templates
+  templates: ScheduleTemplate[];
+  addTemplate: (tpl: Omit<ScheduleTemplate, 'id'>) => void;
+  applyTemplateToStudent: (templateId: string, studentId: string) => void;
+
+  // Trial Exams
+  trialExams: TrialExam[];
+  addTrialExam: (exam: Omit<TrialExam, 'id'>) => Promise<string>;
+  deleteTrialExam: (id: string) => Promise<void>;
+
+  // Homeworks
+  homeworks: Homework[];
+  addHomework: (hw: Omit<Homework, 'id'>) => Promise<string>;
+  updateHomework: (id: string, updates: Partial<Homework>) => Promise<void>;
+
+  // Focus Sessions
+  focusSessions: FocusSession[];
+  addFocusSession: (session: Omit<FocusSession, 'id' | 'completedAt' | 'sentToTeacher'> & { sentToTeacher?: boolean }) => Promise<void>;
+  giveTeacherFeedbackToFocusSession: (sessionId: string, feedback: string) => Promise<void>;
+
+  // Announcements & Notifications
+  announcements: Announcement[];
+  addAnnouncement: (ann: Omit<Announcement, 'id'>) => Promise<string>;
+  deleteAnnouncement: (id: string) => Promise<void>;
+  toggleAnnouncementRead: (announcementId: string, studentId: string) => Promise<void>;
+  notifications: NotificationItem[];
+  markNotificationAsRead: (id: string) => void;
+  clearAllNotifications: () => void;
+
+  // Assigned Exams & Targets
+  assignedExams: AssignedExam[];
+  upcomingExam: AssignedExam | null;
+  addAssignedExam: (exam: Omit<AssignedExam, 'id'>) => Promise<string>;
+  deleteAssignedExam: (id: string) => Promise<void>;
+  updateStudentDailyQuestionTarget: (studentId: string, target: number) => Promise<void>;
+
+  // Timer
+  activeTimer: ActiveTimerSession | null;
+  startTimer: (params: {
+    scheduleItemId?: string;
+    homeworkId?: string;
+    subject: string;
+    topic: string;
+    mode?: 'stopwatch' | 'pomodoro';
+    initialMinutes?: number;
+  }) => void;
+  pauseTimer: () => void;
+  resumeTimer: () => void;
+  resetTimer: () => void;
+  minimizeTimer: () => void;
+  expandTimer: () => void;
+  finishTimer: () => void;
+  cancelTimer: () => void;
+  isTimerModalOpen: boolean;
+  setIsTimerModalOpen: (open: boolean) => void;
+
+  // Question Entry Sheet
+  questionEntryModal: QuestionEntryState | null;
+  closeQuestionEntryModal: () => void;
+  submitQuestionEntry: (results: SolvedQuestions, customSubject?: string, customTopic?: string) => void;
+
+  // Streaks & Recovery
+  incrementStreakForStudent: (studentId: string) => void;
+  addTeacherDailyStreak: (studentId: string) => Promise<boolean>;
+  updateStudentStreakCount: (studentId: string, newCount: number) => Promise<void>;
+  requestStreakRecovery: (studentId: string, excuse: string) => void;
+  approveStreakRecovery: (studentId: string) => void;
+  rejectStreakRecovery: (studentId: string) => void;
+  simulateDayPass: (action: 'today_solved' | 'miss_one_day' | 'miss_three_days') => void;
+
+  targetDaysLeft: number;
+  hasCompletedIntro: boolean;
+  setHasCompletedIntro: (completed: boolean) => void;
+
+  // Firebase status
+  isFirestoreReady: boolean;
+  syncWithCloud: () => Promise<void>;
+  isCloudSyncing: boolean;
+  lastCloudSync: string | null;
+  resetAllData: () => void;
+}
+
+const AppContext = createContext<AppContextType | undefined>(undefined);
+
+const STORAGE_PREFIX = 'akademi_takip_firebase_v1_';
+
+export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // Theme state: Dark mode, Background color customization, Box/Card color customization
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}dark_mode`);
+    return saved !== null ? saved === 'true' : false;
+  });
+
+  const [bgTheme, setBgThemeState] = useState<BackgroundTheme>(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}bg_theme`);
+    return (saved as BackgroundTheme) || 'default';
+  });
+
+  const [boxTheme, setBoxThemeState] = useState<BoxColorTheme>(() => {
+    const saved = localStorage.getItem(`${STORAGE_PREFIX}box_theme`);
+    return (saved as BoxColorTheme) || 'blue';
+  });
+
+  const setBgTheme = useCallback((theme: BackgroundTheme) => {
+    setBgThemeState(theme);
+    localStorage.setItem(`${STORAGE_PREFIX}bg_theme`, theme);
+  }, []);
+
+  const setBoxTheme = useCallback((theme: BoxColorTheme) => {
+    setBoxThemeState(theme);
+    localStorage.setItem(`${STORAGE_PREFIX}box_theme`, theme);
+  }, []);
+
+  // Auth & Roles
+  const [isAuthReady, setIsAuthReady] = useState<boolean>(false);
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [currentTeacher, setCurrentTeacher] = useState<Teacher | null>(() => {
+    try {
+      const t = localStorage.getItem(`${STORAGE_PREFIX}teacher_session`);
+      return t ? JSON.parse(t) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [savedStudentSession, setSavedStudentSession] = useState<Student | null>(() => {
+    try {
+      const s = localStorage.getItem(`${STORAGE_PREFIX}student_session`);
+      return s ? JSON.parse(s) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [role, setRoleState] = useState<Role>(() => {
+    if (savedStudentSession) return 'student';
+    return 'teacher';
+  });
+
+  const [currentStudentId, setCurrentStudentIdState] = useState<string>(() => {
+    return savedStudentSession?.id || '';
+  });
+
+  // Firestore Real-Time Collections
+  const [students, setStudents] = useState<Student[]>([]);
+  const [classrooms, setClassrooms] = useState<Classroom[]>([]);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
+  const [homeworks, setHomeworks] = useState<Homework[]>([]);
+  const [trialExams, setTrialExams] = useState<TrialExam[]>([]);
+  const [focusSessions, setFocusSessions] = useState<FocusSession[]>([]);
+  const [activities, setActivities] = useState<ActivityLog[]>([]);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [assignedExams, setAssignedExams] = useState<AssignedExam[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [templates, setTemplates] = useState<ScheduleTemplate[]>([]);
+
+  // Connectivity
+  const [isFirestoreReady, setIsFirestoreReady] = useState(false);
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+  const [lastCloudSync, setLastCloudSync] = useState<string | null>(null);
+
+  // Intro
+  const [hasCompletedIntro, setHasCompletedIntroState] = useState<boolean>(() => {
+    return localStorage.getItem(`${STORAGE_PREFIX}has_completed_intro`) === 'true';
+  });
+
+  const setHasCompletedIntro = useCallback((completed: boolean) => {
+    setHasCompletedIntroState(completed);
+    localStorage.setItem(`${STORAGE_PREFIX}has_completed_intro`, completed ? 'true' : 'false');
+  }, []);
+
+  // Timer & Question entry
+  const [activeTimer, setActiveTimer] = useState<ActiveTimerSession | null>(null);
+  const [isTimerModalOpen, setIsTimerModalOpen] = useState(false);
+  const [questionEntryModal, setQuestionEntryModal] = useState<QuestionEntryState | null>(null);
+
+  // Initialize Dark Mode in DOM
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem(`${STORAGE_PREFIX}dark_mode`, isDarkMode ? 'true' : 'false');
+  }, [isDarkMode]);
+
+  const toggleDarkMode = useCallback(() => {
+    setIsDarkMode(prev => !prev);
+  }, []);
+
+  // Subscribe to all Firestore collections in real time
+  useEffect(() => {
+    testFirestoreConnection().then(ok => setIsFirestoreReady(ok));
+
+    const unsubStudents = subscribeToCollection<Student>('students', items => {
+      setStudents(items);
+      setLastCloudSync(new Date().toLocaleTimeString('tr-TR'));
+    });
+
+    const unsubClassrooms = subscribeToCollection<Classroom>('classrooms', items => {
+      setClassrooms(items);
+    });
+
+    const unsubTeachers = subscribeToCollection<Teacher>('teachers', items => {
+      setTeachers(items);
+    });
+
+    const unsubSchedules = subscribeToCollection<ScheduleItem>('schedules', items => {
+      setSchedules(items);
+    });
+
+    const unsubHomeworks = subscribeToCollection<Homework>('homeworks', items => {
+      setHomeworks(items);
+    });
+
+    const unsubExams = subscribeToCollection<TrialExam>('trialExams', items => {
+      setTrialExams(items);
+    });
+
+    const unsubFocus = subscribeToCollection<FocusSession>('focusSessions', items => {
+      setFocusSessions(items);
+    });
+
+    const unsubActivities = subscribeToCollection<ActivityLog>('activities', items => {
+      // sort latest first
+      items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setActivities(items);
+    });
+
+    const unsubAnnouncements = subscribeToCollection<Announcement>('announcements', items => {
+      setAnnouncements(items);
+      setNotifications(prev => {
+        const existingMap = new Map(prev.map(n => [n.id, n]));
+        const annNotifs: NotificationItem[] = items.map(ann => {
+          const notifId = `notif_ann_${ann.id}`;
+          const prevNotif = existingMap.get(notifId);
+          return {
+            id: notifId,
+            title: `Duyuru: ${ann.title}`,
+            message: `${ann.authorName || 'Öğretmen'}: ${ann.content}`,
+            date: ann.date,
+            read: prevNotif ? prevNotif.read : false,
+            type: 'system'
+          };
+        });
+        const otherNotifs = prev.filter(n => !n.id.startsWith('notif_ann_'));
+        return [...annNotifs, ...otherNotifs];
+      });
+    });
+
+    const unsubAssignedExams = subscribeToCollection<AssignedExam>('assigned_exams', items => {
+      items.sort((a, b) => a.examDate.localeCompare(b.examDate));
+      setAssignedExams(items);
+    });
+
+    return () => {
+      unsubStudents();
+      unsubClassrooms();
+      unsubTeachers();
+      unsubSchedules();
+      unsubHomeworks();
+      unsubExams();
+      unsubFocus();
+      unsubActivities();
+      unsubAnnouncements();
+      unsubAssignedExams();
+    };
+  }, []);
+
+  // Listen to Firebase Auth state
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      setFirebaseUser(user);
+      if (user) {
+        // Teacher logged in with Google
+        const teacherName = user.displayName || user.email?.split('@')[0] || 'Öğretmen';
+        const teacherProfile: Teacher = {
+          id: user.uid,
+          uid: user.uid,
+          name: teacherName,
+          email: user.email || '',
+          photoURL: user.photoURL || undefined,
+          branch: 'Koçluk & Rehberlik',
+          createdAt: new Date().toISOString()
+        };
+        setCurrentTeacher(teacherProfile);
+        setRoleState('teacher');
+        setSavedStudentSession(null);
+        localStorage.removeItem(`${STORAGE_PREFIX}student_session`);
+        localStorage.setItem(`${STORAGE_PREFIX}teacher_session`, JSON.stringify(teacherProfile));
+        // Sync teacher in firestore
+        saveTeacherToFirestore(teacherProfile);
+      }
+      setIsAuthReady(true);
+    });
+
+    return () => unsubscribeAuth();
+  }, []);
+
+  // Current student object resolution
+  const currentStudent = useMemo(() => {
+    if (savedStudentSession) {
+      const live = students.find(s => s.id === savedStudentSession.id);
+      return live || savedStudentSession;
+    }
+    if (currentStudentId) {
+      return students.find(s => s.id === currentStudentId);
+    }
+    if (role === 'student' && students.length > 0) {
+      return students[0];
+    }
+    return undefined;
+  }, [students, currentStudentId, savedStudentSession, role]);
+
+  const setCurrentStudentId = useCallback((id: string) => {
+    setCurrentStudentIdState(id);
+    const found = students.find(s => s.id === id);
+    if (found && role === 'student') {
+      setSavedStudentSession(found);
+      localStorage.setItem(`${STORAGE_PREFIX}student_session`, JSON.stringify(found));
+    }
+  }, [students, role]);
+
+  // Is logged in computation
+  const isLoggedIn = useMemo(() => {
+    if (role === 'teacher') {
+      return !!firebaseUser || !!currentTeacher;
+    }
+    if (role === 'student') {
+      return !!savedStudentSession || !!currentStudent;
+    }
+    return false;
+  }, [role, firebaseUser, currentTeacher, savedStudentSession, currentStudent]);
+
+  // Teacher Login with Google
+  const loginTeacherWithGoogle = useCallback(async () => {
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+      const teacherName = user.displayName || user.email?.split('@')[0] || 'Öğretmen';
+      const teacherProfile: Teacher = {
+        id: user.uid,
+        uid: user.uid,
+        name: teacherName,
+        email: user.email || '',
+        photoURL: user.photoURL || undefined,
+        branch: 'Koçluk & Rehberlik',
+        createdAt: new Date().toISOString()
+      };
+      await saveTeacherToFirestore(teacherProfile);
+      setCurrentTeacher(teacherProfile);
+      setRoleState('teacher');
+      setSavedStudentSession(null);
+      localStorage.setItem(`${STORAGE_PREFIX}teacher_session`, JSON.stringify(teacherProfile));
+      localStorage.removeItem(`${STORAGE_PREFIX}student_session`);
+      return { success: true, teacher: teacherProfile };
+    } catch (err: any) {
+      console.error('Google Sign-in failed:', err);
+      return { success: false, error: err.message || 'Google girişi tamamlanamadı' };
+    }
+  }, []);
+
+  // Teacher Login with Name & Password
+  const loginTeacherCredentials = useCallback(async (name: string, password: string, branch?: string) => {
+    const cleanName = name.trim();
+    const cleanPass = password.trim();
+
+    if (!cleanName || cleanName.length < 2) {
+      return { success: false, error: 'Lütfen ad ve soyadınızı eksiksiz girin.' };
+    }
+    if (!cleanPass || cleanPass.length < 4) {
+      return { success: false, error: 'Öğretmen giriş şifresi en az 4 karakter olmalıdır.' };
+    }
+
+    // Check if a teacher with this name already exists in Firestore teachers collection
+    const existing = teachers.find(t => t.name.trim().toLowerCase() === cleanName.toLowerCase());
+
+    if (existing) {
+      // If teacher has a password set, verify it
+      if (existing.password && existing.password !== cleanPass) {
+        return { success: false, error: 'Bu öğretmen adı için girilen şifre hatalı!' };
+      }
+      // If teacher did not have a password set yet, update it with this password
+      if (!existing.password) {
+        const updated = { ...existing, password: cleanPass };
+        await saveTeacherToFirestore(updated);
+      }
+
+      setCurrentTeacher(existing);
+      setRoleState('teacher');
+      setSavedStudentSession(null);
+      localStorage.setItem(`${STORAGE_PREFIX}teacher_session`, JSON.stringify(existing));
+      localStorage.removeItem(`${STORAGE_PREFIX}student_session`);
+      return { success: true, teacher: existing };
+    }
+
+    // Otherwise register new teacher profile
+    const newId = `tch_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const newTeacher: Teacher = {
+      id: newId,
+      name: cleanName,
+      password: cleanPass,
+      branch: branch?.trim() || 'Koçluk & Rehberlik',
+      createdAt: new Date().toISOString()
+    };
+
+    await saveTeacherToFirestore(newTeacher);
+    setCurrentTeacher(newTeacher);
+    setRoleState('teacher');
+    setSavedStudentSession(null);
+    localStorage.setItem(`${STORAGE_PREFIX}teacher_session`, JSON.stringify(newTeacher));
+    localStorage.removeItem(`${STORAGE_PREFIX}student_session`);
+    return { success: true, teacher: newTeacher };
+  }, [teachers]);
+
+  // Student Login with Class Code + 5-digit number + 4-digit password
+  const loginStudentWithClassCode = useCallback(async (
+    classCode: string,
+    studentNumber: string,
+    password: string
+  ) => {
+    const cleanCode = classCode.trim().toUpperCase();
+    const cleanNo = studentNumber.trim();
+    const cleanPass = password.trim();
+
+    // 1. Find classroom
+    const classroom = classrooms.find(c => (c.code || '').trim().toUpperCase() === cleanCode);
+    if (!classroom) {
+      return { success: false, message: 'Geçersiz sınıf kodu! Lütfen öğretmeninizden aldığınız sınıf kodunu kontrol edin.' };
+    }
+
+    // 2. Find student
+    const matched = students.find(s => {
+      const matchNum = (s.studentNumber || s.pin.substring(0, 5)).trim() === cleanNo;
+      const matchPass = (s.password || s.pin.substring(s.pin.length - 4)).trim() === cleanPass;
+      return matchNum && matchPass;
+    });
+
+    if (!matched) {
+      return { success: false, message: 'Bu sınıf için 5 haneli Numara veya 4 haneli Şifre hatalı!' };
+    }
+
+    // Ensure student is in classroom
+    const curClasses = matched.classroomIds || [];
+    if (!curClasses.includes(classroom.id)) {
+      await updateStudentInFirestore(matched.id, {
+        classroomIds: [...curClasses, classroom.id]
+      });
+    }
+
+    // Log student activity
+    const activityId = `act_${Date.now()}`;
+    await saveActivityLogToFirestore({
+      id: activityId,
+      studentId: matched.id,
+      studentName: matched.name,
+      teacherUid: classroom.teacherUid,
+      type: 'joined_class',
+      title: 'Sınıfa Katıldı',
+      detail: `${matched.name}, "${classroom.name}" sınıfına başarıyla giriş yaptı.`,
+      timestamp: new Date().toISOString()
+    });
+
+    setSavedStudentSession(matched);
+    setCurrentStudentIdState(matched.id);
+    setRoleState('student');
+    localStorage.setItem(`${STORAGE_PREFIX}student_session`, JSON.stringify(matched));
+
+    return { success: true, student: matched };
+  }, [classrooms, students]);
+
+  // Direct Student Login (Student Number + Password)
+  const loginStudentDirect = useCallback(async (studentNumber: string, password: string) => {
+    const cleanNo = studentNumber.trim();
+    const cleanPass = password.trim();
+
+    const matched = students.find(s => {
+      const matchNum = (s.studentNumber || s.pin.substring(0, 5)).trim() === cleanNo;
+      const matchPass = (s.password || s.pin.substring(s.pin.length - 4)).trim() === cleanPass;
+      return matchNum && matchPass;
+    });
+
+    if (!matched) {
+      return { success: false, message: 'Geçersiz 5 haneli öğrenci numarası veya 4 haneli şifre!' };
+    }
+
+    setSavedStudentSession(matched);
+    setCurrentStudentIdState(matched.id);
+    setRoleState('student');
+    localStorage.setItem(`${STORAGE_PREFIX}student_session`, JSON.stringify(matched));
+
+    // Log activity
+    const activityId = `act_${Date.now()}`;
+    await saveActivityLogToFirestore({
+      id: activityId,
+      studentId: matched.id,
+      studentName: matched.name,
+      teacherUid: matched.teacherUid,
+      type: 'streak_active',
+      title: 'Öğrenci Giriş Yaptı',
+      detail: `${matched.name} sisteme giriş yaptı ve çalışma paneline bağlandı.`,
+      timestamp: new Date().toISOString()
+    });
+
+    return { success: true, student: matched };
+  }, [students]);
+
+  // Logout
+  const logout = useCallback(async () => {
+    try {
+      if (firebaseUser) {
+        await signOut(auth);
+      }
+    } catch (e) {
+      console.error('Signout error:', e);
+    }
+    setFirebaseUser(null);
+    setCurrentTeacher(null);
+    setSavedStudentSession(null);
+    setCurrentStudentIdState('');
+    localStorage.removeItem(`${STORAGE_PREFIX}teacher_session`);
+    localStorage.removeItem(`${STORAGE_PREFIX}student_session`);
+  }, [firebaseUser]);
+
+  // Student mutations
+  const addStudent = useCallback(async (data: Omit<Student, 'id' | 'streak'>) => {
+    const id = `std_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const newStudent: Student = {
+      ...data,
+      id,
+      teacherUid: firebaseUser?.uid || currentTeacher?.id || '',
+      createdAt: new Date().toISOString(),
+      streak: {
+        count: 0,
+        status: 'active',
+        lastActiveDate: '',
+        frozenDays: 0,
+      }
+    };
+    await saveStudentToFirestore(newStudent);
+    return id;
+  }, [firebaseUser, currentTeacher]);
+
+  const updateStudent = useCallback(async (id: string, updates: Partial<Student>) => {
+    await updateStudentInFirestore(id, updates);
+  }, []);
+
+  const deleteStudent = useCallback(async (id: string) => {
+    await deleteStudentFromFirestore(id);
+  }, []);
+
+  // Classroom mutations
+  const addClassroom = useCallback(async (data: Omit<Classroom, 'id' | 'createdAt'>) => {
+    const id = `cls_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const code = data.code || `AKD-${randomSuffix}`;
+
+    const newClass: Classroom = {
+      ...data,
+      id,
+      code,
+      teacherUid: firebaseUser?.uid || currentTeacher?.id || '',
+      createdAt: new Date().toISOString()
+    };
+    await saveClassroomToFirestore(newClass);
+    return id;
+  }, [firebaseUser, currentTeacher]);
+
+  const updateClassroom = useCallback(async (id: string, updates: Partial<Classroom>) => {
+    await updateClassroomInFirestore(id, updates);
+  }, []);
+
+  const deleteClassroom = useCallback(async (id: string) => {
+    // Optimistically remove from state so the card disappears immediately
+    setClassrooms(prev => prev.filter(c => c.id !== id));
+    try {
+      await deleteClassroomFromFirestore(id);
+    } catch (err) {
+      console.error('Failed to delete classroom from Firestore:', err);
+    }
+  }, []);
+
+  const assignStudentToClassrooms = useCallback(async (studentId: string, classroomIds: string[]) => {
+    await updateStudentInFirestore(studentId, { classroomIds });
+  }, []);
+
+  // Teacher mutations
+  const addTeacher = useCallback(async (data: Omit<Teacher, 'id'>) => {
+    const id = `tch_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const newTch: Teacher = { ...data, id, createdAt: new Date().toISOString() };
+    await saveTeacherToFirestore(newTch);
+    return id;
+  }, []);
+
+  const updateTeacher = useCallback(async (id: string, updates: Partial<Teacher>) => {
+    // update teacher
+    await saveTeacherToFirestore({ ...updates, id } as Teacher);
+  }, []);
+
+  const deleteTeacher = useCallback(async (id: string) => {
+    // delete
+  }, []);
+
+  // Activity logger
+  const logActivity = useCallback(async (data: Omit<ActivityLog, 'id' | 'timestamp'>) => {
+    const id = `act_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const logItem: ActivityLog = {
+      ...data,
+      id,
+      timestamp: new Date().toISOString()
+    };
+    await saveActivityLogToFirestore(logItem);
+  }, []);
+
+  // Schedule mutations
+  const addScheduleItem = useCallback(async (item: Omit<ScheduleItem, 'id'>) => {
+    const id = `sch_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const newItem: ScheduleItem = {
+      ...item,
+      id,
+      teacherNote: item.teacherNote || '',
+      status: item.status || 'pending',
+      updatedAt: new Date().toISOString()
+    };
+    setSchedules(prev => [...prev, newItem]);
+    await saveScheduleItemToFirestore(newItem);
+    return id;
+  }, []);
+
+  const updateScheduleItem = useCallback(async (id: string, updates: Partial<ScheduleItem>) => {
+    const updatedAt = new Date().toISOString();
+    setSchedules(prev => prev.map(s => s.id === id ? { ...s, ...updates, updatedAt } : s));
+    await updateScheduleItemInFirestore(id, { ...updates, updatedAt });
+  }, []);
+
+  const deleteScheduleItem = useCallback(async (id: string) => {
+    setSchedules(prev => prev.filter(s => s.id !== id));
+    await deleteScheduleItemFromFirestore(id);
+  }, []);
+
+  // Homework mutations
+  const addHomework = useCallback(async (hw: Omit<Homework, 'id'>) => {
+    const id = `hw_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const newHw: Homework = {
+      ...hw,
+      id,
+      teacherUid: firebaseUser?.uid || currentTeacher?.id || '',
+      status: hw.status || 'pending'
+    };
+    await saveHomeworkToFirestore(newHw);
+    return id;
+  }, [firebaseUser, currentTeacher]);
+
+  const updateHomework = useCallback(async (id: string, updates: Partial<Homework>) => {
+    await updateHomeworkInFirestore(id, updates);
+  }, []);
+
+  // Trial Exam mutations
+  const addTrialExam = useCallback(async (exam: Omit<TrialExam, 'id'>) => {
+    const id = `ex_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const newExam: TrialExam = {
+      ...exam,
+      id,
+      teacherUid: firebaseUser?.uid || currentTeacher?.id || ''
+    };
+    await saveTrialExamToFirestore(newExam);
+
+    // Also log activity to teacher
+    if (currentStudent) {
+      await logActivity({
+        studentId: currentStudent.id,
+        studentName: currentStudent.name,
+        teacherUid: currentStudent.teacherUid,
+        type: 'exam_recorded',
+        title: 'Deneme Sınavı Kaydedildi',
+        detail: `${currentStudent.name}, "${newExam.title}" denemesinden ${newExam.totalNet} net yaptı.`
+      });
+    }
+
+    return id;
+  }, [firebaseUser, currentTeacher, currentStudent, logActivity]);
+
+  const deleteTrialExam = useCallback(async (id: string) => {
+    await deleteTrialExamFromFirestore(id);
+  }, []);
+
+  // Focus Session mutations
+  const addFocusSession = useCallback(async (session: Omit<FocusSession, 'id' | 'completedAt' | 'sentToTeacher'> & { sentToTeacher?: boolean }) => {
+    const id = `fcs_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const newSession: FocusSession = {
+      ...session,
+      id,
+      completedAt: new Date().toISOString(),
+      sentToTeacher: true
+    };
+    setFocusSessions(prev => [newSession, ...prev]);
+    await saveFocusSessionToFirestore(newSession);
+
+    // Otomatik Seri Kuralı: Öğrenci odak modunda 5 dakika (300 sn) ve üzeri geçirirse günde en fazla 1 kez +1 seri kazanır
+    const isFiveMinOrMore = session.durationMinutes >= 5 || (session.durationSeconds || 0) >= 300;
+    const targetSt = students.find(s => s.id === session.studentId) || (currentStudent?.id === session.studentId ? currentStudent : undefined);
+    const todayStr = new Date().toISOString().split('T')[0];
+    const alreadyEarnedToday = (targetSt?.streak?.lastActiveDate === todayStr) && ((targetSt?.streak?.count || 0) > 0);
+    const earnedStreakNow = Boolean(isFiveMinOrMore && targetSt && !alreadyEarnedToday);
+
+    if (earnedStreakNow && targetSt) {
+      const updatedStreak = {
+        ...targetSt.streak,
+        count: (targetSt.streak?.count || 0) + 1,
+        status: 'active' as StreakStatus,
+        lastActiveDate: todayStr
+      };
+      setStudents(prev => prev.map(s => s.id === targetSt.id ? { ...s, streak: updatedStreak } : s));
+      await updateStudentInFirestore(targetSt.id, { streak: updatedStreak });
+    }
+
+    const qText = session.solvedQuestions
+      ? ` • ${session.solvedQuestions.correct}D / ${session.solvedQuestions.wrong}Y / ${session.solvedQuestions.blank}B (${session.solvedQuestions.net} Net)`
+      : '';
+
+    // Log activity to teacher immediately
+    await logActivity({
+      studentId: session.studentId,
+      studentName: session.studentName,
+      type: session.solvedQuestions ? 'question_solved' : 'focus_completed',
+      title: `${session.subject} • ${session.topic}`,
+      detail: `${session.studentName}, ${session.durationMinutes} dk odaklandı${qText}.${earnedStreakNow ? ' (+1 Gün Seri)' : ''}`
+    });
+  }, [logActivity, students, currentStudent]);
+
+  const giveTeacherFeedbackToFocusSession = useCallback(async (sessionId: string, feedback: string) => {
+    const session = focusSessions.find(f => f.id === sessionId);
+    if (session) {
+      await saveFocusSessionToFirestore({
+        ...session,
+        teacherFeedback: feedback,
+        teacherFeedbackAt: new Date().toISOString()
+      });
+    }
+  }, [focusSessions]);
+
+  // Announcements
+  const addAnnouncement = useCallback(async (ann: Omit<Announcement, 'id'>) => {
+    const id = `ann_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const dateStr = new Date().toLocaleDateString('tr-TR');
+    const newAnn: Announcement = {
+      ...ann,
+      id,
+      teacherUid: firebaseUser?.uid || currentTeacher?.id || '',
+      date: dateStr,
+      readBy: []
+    };
+    setAnnouncements(prev => [newAnn, ...prev]);
+    setNotifications(prev => [
+      {
+        id: `notif_ann_${id}`,
+        title: `Duyuru: ${newAnn.title}`,
+        message: `${newAnn.authorName || 'Öğretmen'}: ${newAnn.content}`,
+        date: dateStr,
+        read: false,
+        type: 'system'
+      },
+      ...prev.filter(n => n.id !== `notif_ann_${id}`)
+    ]);
+    await saveAnnouncementToFirestore(newAnn);
+    return id;
+  }, [firebaseUser, currentTeacher]);
+
+  const deleteAnnouncement = useCallback(async (id: string) => {
+    setAnnouncements(prev => prev.filter(a => a.id !== id));
+    setNotifications(prev => prev.filter(n => n.id !== `notif_ann_${id}`));
+    await deleteAnnouncementFromFirestore(id);
+  }, []);
+
+  const toggleAnnouncementRead = useCallback(async (announcementId: string, studentId: string) => {
+    const targetAnn = announcements.find(a => a.id === announcementId);
+    if (!targetAnn) return;
+    const currentReads = targetAnn.readBy || [];
+    const isAlreadyRead = currentReads.includes(studentId);
+    const updatedReads = isAlreadyRead
+      ? currentReads.filter(id => id !== studentId)
+      : [...currentReads, studentId];
+
+    setAnnouncements(prev => prev.map(a => a.id === announcementId ? { ...a, readBy: updatedReads } : a));
+    if (!isAlreadyRead) {
+      setNotifications(prev => prev.map(n => n.id === `notif_ann_${announcementId}` ? { ...n, read: true } : n));
+    }
+    await updateAnnouncementInFirestore(announcementId, { readBy: updatedReads });
+  }, [announcements]);
+
+  // Assigned Exams
+  const addAssignedExam = useCallback(async (exam: Omit<AssignedExam, 'id'>) => {
+    const id = `exam_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const newExam: AssignedExam = {
+      ...exam,
+      id,
+      teacherUid: firebaseUser?.uid || currentTeacher?.id || '',
+      createdAt: new Date().toISOString()
+    };
+    setAssignedExams(prev => [...prev, newExam].sort((a, b) => a.examDate.localeCompare(b.examDate)));
+    await saveAssignedExamToFirestore(newExam);
+    return id;
+  }, [firebaseUser, currentTeacher]);
+
+  const deleteAssignedExam = useCallback(async (id: string) => {
+    setAssignedExams(prev => prev.filter(e => e.id !== id));
+    await deleteAssignedExamFromFirestore(id);
+  }, []);
+
+  // Student Daily Question Target
+  const updateStudentDailyQuestionTarget = useCallback(async (studentId: string, target: number) => {
+    setStudents(prev => prev.map(s => s.id === studentId ? { ...s, dailyQuestionTarget: target } : s));
+    await updateStudentInFirestore(studentId, { dailyQuestionTarget: target });
+  }, []);
+
+  // Templates
+  const addTemplate = useCallback((tpl: Omit<ScheduleTemplate, 'id'>) => {
+    const id = `tpl_${Date.now()}`;
+    setTemplates(prev => [...prev, { ...tpl, id }]);
+  }, []);
+
+  const applyTemplateToStudent = useCallback((templateId: string, studentId: string) => {
+    const tpl = templates.find(t => t.id === templateId);
+    if (!tpl) return;
+    tpl.items.forEach(async item => {
+      await addScheduleItem({ ...item, studentId });
+    });
+  }, [templates, addScheduleItem]);
+
+  // Notifications
+  const markNotificationAsRead = useCallback((id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  }, []);
+
+  const clearAllNotifications = useCallback(() => {
+    setNotifications([]);
+  }, []);
+
+  // Timer handlers
+  const startTimer = useCallback((params: {
+    scheduleItemId?: string;
+    homeworkId?: string;
+    subject: string;
+    topic: string;
+    mode?: 'stopwatch' | 'pomodoro';
+    initialMinutes?: number;
+  }) => {
+    setActiveTimer({
+      scheduleItemId: params.scheduleItemId,
+      homeworkId: params.homeworkId,
+      studentId: currentStudent?.id || '',
+      subject: params.subject,
+      topic: params.topic,
+      mode: params.mode || 'stopwatch',
+      initialDurationMinutes: params.initialMinutes || 25,
+      elapsedSeconds: 0,
+      isRunning: true,
+      isMinimized: false,
+      startedAt: new Date().toISOString()
+    });
+    setIsTimerModalOpen(true);
+  }, [currentStudent]);
+
+  const pauseTimer = useCallback(() => {
+    setActiveTimer(prev => prev ? { ...prev, isRunning: false } : null);
+  }, []);
+
+  const resumeTimer = useCallback(() => {
+    setActiveTimer(prev => prev ? { ...prev, isRunning: true } : null);
+  }, []);
+
+  const resetTimer = useCallback(() => {
+    setActiveTimer(prev => prev ? { ...prev, elapsedSeconds: 0 } : null);
+  }, []);
+
+  const minimizeTimer = useCallback(() => {
+    setActiveTimer(prev => prev ? { ...prev, isMinimized: true } : null);
+    setIsTimerModalOpen(false);
+  }, []);
+
+  const expandTimer = useCallback(() => {
+    setActiveTimer(prev => prev ? { ...prev, isMinimized: false } : null);
+    setIsTimerModalOpen(true);
+  }, []);
+
+  const finishTimer = useCallback(() => {
+    if (!activeTimer) return;
+    const durationMinutes = Math.max(1, Math.round(activeTimer.elapsedSeconds / 60));
+
+    // Open question entry sheet
+    setQuestionEntryModal({
+      isOpen: true,
+      scheduleItemId: activeTimer.scheduleItemId,
+      homeworkId: activeTimer.homeworkId,
+      durationMinutes,
+      subject: activeTimer.subject,
+      topic: activeTimer.topic
+    });
+
+    setIsTimerModalOpen(false);
+    setActiveTimer(null);
+  }, [activeTimer]);
+
+  const cancelTimer = useCallback(() => {
+    setActiveTimer(null);
+    setIsTimerModalOpen(false);
+  }, []);
+
+  const closeQuestionEntryModal = useCallback(() => {
+    setQuestionEntryModal(null);
+  }, []);
+
+  // Submit Question Entry
+  const submitQuestionEntry = useCallback(async (results: SolvedQuestions, customSubject?: string, customTopic?: string) => {
+    if (!questionEntryModal || !currentStudent) return;
+
+    const finalSubject = customSubject?.trim() || questionEntryModal.subject;
+    const finalTopic = customTopic?.trim() || questionEntryModal.topic;
+
+    // Update schedule item if linked
+    if (questionEntryModal.scheduleItemId) {
+      await updateScheduleItem(questionEntryModal.scheduleItemId, {
+        subject: finalSubject,
+        topic: finalTopic,
+        actualDurationMinutes: questionEntryModal.durationMinutes,
+        solvedQuestions: results,
+        status: 'completed'
+      });
+    }
+
+    // Update homework item if linked
+    if (questionEntryModal.homeworkId) {
+      await updateHomework(questionEntryModal.homeworkId, {
+        status: 'submitted',
+        studentSubmission: {
+          ...results,
+          submittedAt: new Date().toISOString()
+        }
+      });
+    }
+
+    // Save as focus session in Firestore (automatically handles >= 5 min streak +1 & activity log)
+    await addFocusSession({
+      studentId: currentStudent.id,
+      studentName: currentStudent.name,
+      teacherUid: currentStudent.teacherUid,
+      subject: finalSubject,
+      topic: finalTopic,
+      durationMinutes: questionEntryModal.durationMinutes,
+      durationSeconds: questionEntryModal.durationMinutes * 60,
+      mode: 'stopwatch',
+      solvedQuestions: results,
+      sentToTeacher: true
+    });
+
+    // Confetti celebration
+    try {
+      confetti({
+        particleCount: 80,
+        spread: 60,
+        origin: { y: 0.6 }
+      });
+    } catch {}
+
+    setQuestionEntryModal(null);
+  }, [questionEntryModal, currentStudent, updateScheduleItem, updateHomework, addFocusSession]);
+
+  // Streak operations
+  const incrementStreakForStudent = useCallback(async (studentId: string) => {
+    const st = students.find(s => s.id === studentId);
+    if (!st) return;
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (st.streak?.lastActiveDate === todayStr && (st.streak?.count || 0) > 0) return;
+    const updatedStreak = {
+      ...st.streak,
+      count: (st.streak?.count || 0) + 1,
+      status: 'active' as StreakStatus,
+      lastActiveDate: todayStr
+    };
+    setStudents(prev => prev.map(s => s.id === studentId ? { ...s, streak: updatedStreak } : s));
+    await updateStudentInFirestore(studentId, { streak: updatedStreak });
+  }, [students]);
+
+  const addTeacherDailyStreak = useCallback(async (studentId: string): Promise<boolean> => {
+    const st = students.find(s => s.id === studentId);
+    if (!st) return false;
+    const todayStr = new Date().toISOString().split('T')[0];
+    // Aynı gün içinde zaten seri eklendiyse tekrar eklenemesin
+    if (st.streak?.lastActiveDate === todayStr && (st.streak?.count || 0) > 0) {
+      return false;
+    }
+    const updatedStreak = {
+      ...st.streak,
+      count: (st.streak?.count || 0) + 1,
+      status: 'active' as StreakStatus,
+      lastActiveDate: todayStr
+    };
+    setStudents(prev => prev.map(s => s.id === studentId ? { ...s, streak: updatedStreak } : s));
+    await updateStudentInFirestore(studentId, { streak: updatedStreak });
+    await logActivity({
+      studentId: st.id,
+      studentName: st.name,
+      teacherUid: st.teacherUid,
+      type: 'streak_active',
+      title: '+1 Gün Seri Eklendi',
+      detail: `${st.name} • Toplam: ${updatedStreak.count} Gün`
+    });
+    return true;
+  }, [students, logActivity]);
+
+  const updateStudentStreakCount = useCallback(async (studentId: string, newCount: number) => {
+    const st = students.find(s => s.id === studentId);
+    if (!st) return;
+    const cleanCount = Math.max(0, Math.floor(Number(newCount) || 0));
+    const updatedStreak = {
+      ...st.streak,
+      count: cleanCount,
+      status: (cleanCount > 0 ? 'active' : 'lost') as StreakStatus,
+      lastActiveDate: cleanCount === 0 ? '' : (st.streak?.lastActiveDate || '')
+    };
+    setStudents(prev => prev.map(s => s.id === studentId ? { ...s, streak: updatedStreak } : s));
+    await updateStudentInFirestore(studentId, { streak: updatedStreak });
+  }, [students]);
+
+  const requestStreakRecovery = useCallback(async (studentId: string, excuse: string) => {
+    const st = students.find(s => s.id === studentId);
+    if (!st) return;
+    await updateStudentInFirestore(studentId, {
+      streak: {
+        ...st.streak,
+        status: 'pending_recovery',
+        excuseNote: excuse,
+        requestDate: new Date().toISOString()
+      }
+    });
+  }, [students]);
+
+  const approveStreakRecovery = useCallback(async (studentId: string) => {
+    const st = students.find(s => s.id === studentId);
+    if (!st) return;
+    const updatedStreak = {
+      ...st.streak,
+      status: 'active' as StreakStatus,
+      excuseNote: '',
+      requestDate: ''
+    };
+    setStudents(prev => prev.map(s => s.id === studentId ? { ...s, streak: updatedStreak } : s));
+    await updateStudentInFirestore(studentId, {
+      streak: updatedStreak
+    });
+  }, [students]);
+
+  const rejectStreakRecovery = useCallback(async (studentId: string) => {
+    const st = students.find(s => s.id === studentId);
+    if (!st) return;
+    const updatedStreak = {
+      ...st.streak,
+      status: 'lost' as StreakStatus,
+      count: 0,
+      excuseNote: '',
+      requestDate: ''
+    };
+    setStudents(prev => prev.map(s => s.id === studentId ? { ...s, streak: updatedStreak } : s));
+    await updateStudentInFirestore(studentId, {
+      streak: updatedStreak
+    });
+  }, [students]);
+
+  const simulateDayPass = useCallback(async (action: 'today_solved' | 'miss_one_day' | 'miss_three_days') => {
+    if (!currentStudent) return;
+    if (action === 'today_solved') {
+      await incrementStreakForStudent(currentStudent.id);
+    } else if (action === 'miss_one_day') {
+      await updateStudentInFirestore(currentStudent.id, {
+        streak: { ...currentStudent.streak, status: 'frozen', frozenDays: 1 }
+      });
+    } else if (action === 'miss_three_days') {
+      await updateStudentInFirestore(currentStudent.id, {
+        streak: { ...currentStudent.streak, status: 'pending_recovery', frozenDays: 3 }
+      });
+    }
+  }, [currentStudent, incrementStreakForStudent]);
+
+  // Upcoming Exam (from teacher-assigned exams)
+  const upcomingExam = useMemo(() => {
+    if (assignedExams.length === 0) return null;
+    const todayStr = new Date().toISOString().split('T')[0];
+    const futureOrToday = assignedExams
+      .filter(e => e.examDate >= todayStr)
+      .sort((a, b) => a.examDate.localeCompare(b.examDate));
+    return futureOrToday[0] || assignedExams[assignedExams.length - 1] || null;
+  }, [assignedExams]);
+
+  // Days left for upcoming exam
+  const targetDaysLeft = useMemo(() => {
+    if (upcomingExam) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const target = new Date(upcomingExam.examDate);
+      target.setHours(0, 0, 0, 0);
+      const diff = Math.ceil((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      return diff >= 0 ? diff : 0;
+    }
+    if (currentStudent?.targetExamDate) {
+      const target = new Date(currentStudent.targetExamDate).getTime();
+      const now = new Date().getTime();
+      const diff = Math.ceil((target - now) / (1000 * 60 * 60 * 24));
+      return diff > 0 ? diff : 0;
+    }
+    return 18;
+  }, [upcomingExam, currentStudent]);
+
+  const syncWithCloud = useCallback(async () => {
+    setIsCloudSyncing(true);
+    await testFirestoreConnection();
+    setLastCloudSync(new Date().toLocaleTimeString('tr-TR'));
+    setIsCloudSyncing(false);
+  }, []);
+
+  const resetAllData = useCallback(() => {
+    // Reset local
+    setSavedStudentSession(null);
+    localStorage.removeItem(`${STORAGE_PREFIX}student_session`);
+  }, []);
+
+  return (
+    <AppContext.Provider
+      value={{
+        role,
+        setRole: setRoleState,
+        isLoggedIn,
+        isAuthReady,
+        firebaseUser,
+        currentTeacher,
+        currentStudent,
+        currentStudentId,
+        setCurrentStudentId,
+        loginTeacherWithGoogle,
+        loginTeacherCredentials,
+        loginStudentWithClassCode,
+        loginStudentDirect,
+        cloudLoginWithStudentCredentials: loginStudentDirect,
+        logout,
+        isDarkMode,
+        toggleDarkMode,
+        bgTheme,
+        setBgTheme,
+        boxTheme,
+        setBoxTheme,
+        students,
+        addStudent,
+        updateStudent,
+        deleteStudent,
+        classrooms,
+        addClassroom,
+        updateClassroom,
+        deleteClassroom,
+        assignStudentToClassrooms,
+        teachers,
+        addTeacher,
+        updateTeacher,
+        deleteTeacher,
+        activities,
+        logActivity,
+        schedules,
+        addScheduleItem,
+        updateScheduleItem,
+        deleteScheduleItem,
+        templates,
+        addTemplate,
+        applyTemplateToStudent,
+        trialExams,
+        addTrialExam,
+        deleteTrialExam,
+        homeworks,
+        addHomework,
+        updateHomework,
+        focusSessions,
+        addFocusSession,
+        giveTeacherFeedbackToFocusSession,
+        announcements,
+        addAnnouncement,
+        deleteAnnouncement,
+        toggleAnnouncementRead,
+        assignedExams,
+        upcomingExam,
+        addAssignedExam,
+        deleteAssignedExam,
+        updateStudentDailyQuestionTarget,
+        notifications,
+        markNotificationAsRead,
+        clearAllNotifications,
+        activeTimer,
+        startTimer,
+        pauseTimer,
+        resumeTimer,
+        resetTimer,
+        minimizeTimer,
+        expandTimer,
+        finishTimer,
+        cancelTimer,
+        isTimerModalOpen,
+        setIsTimerModalOpen,
+        questionEntryModal,
+        closeQuestionEntryModal,
+        submitQuestionEntry,
+        incrementStreakForStudent,
+        addTeacherDailyStreak,
+        updateStudentStreakCount,
+        requestStreakRecovery,
+        approveStreakRecovery,
+        rejectStreakRecovery,
+        simulateDayPass,
+        targetDaysLeft,
+        hasCompletedIntro,
+        setHasCompletedIntro,
+        isFirestoreReady,
+        syncWithCloud,
+        isCloudSyncing,
+        lastCloudSync,
+        resetAllData,
+      }}
+    >
+      {children}
+    </AppContext.Provider>
+  );
+};
+
+export const useApp = () => {
+  const context = useContext(AppContext);
+  if (!context) {
+    throw new Error('useApp must be used within an AppProvider');
+  }
+  return context;
+};
