@@ -15,6 +15,7 @@ export const LoginModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
   const [activeTab, setActiveTab] = useState<'student' | 'teacher'>('student');
   const [teacherMode, setTeacherMode] = useState<'login' | 'register'>('login');
 
+  const [classCode, setClassCode] = useState('');
   const [studentNumber, setStudentNumber] = useState('');
   const [password, setPassword] = useState('');
 
@@ -31,6 +32,12 @@ export const LoginModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
     e.preventDefault();
     setErrorMessage('');
 
+    const cleanCode = classCode.trim().toUpperCase();
+    if (!cleanCode) {
+      setErrorMessage('Lütfen kurumunuzdan aldığınız AKD Sınıf Kodunu girin.');
+      return;
+    }
+
     if (studentNumber.length < 5 || password.length < 4) {
       setErrorMessage('Lütfen 5 haneli Numara ve 4 haneli Şifrenizi girin.');
       return;
@@ -38,13 +45,13 @@ export const LoginModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
 
     setIsLoading(true);
     try {
-      const res = await cloudLoginWithStudentCredentials(studentNumber.trim(), password.trim());
+      const res = await cloudLoginWithStudentCredentials(cleanCode, studentNumber.trim(), password.trim());
       if (res.success && res.student) {
         setRole('student');
         setCurrentStudentId(res.student.id);
         onClose();
       } else {
-        setErrorMessage(res.message || 'Geçersiz Numara veya Şifre!');
+        setErrorMessage(res.message || 'Geçersiz Sınıf Kodu, Numara veya Şifre!');
       }
     } catch {
       setErrorMessage('Giriş yapılırken hata oluştu.');
@@ -150,9 +157,27 @@ export const LoginModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
           <form onSubmit={handleStudentLogin} className="space-y-4">
             <div className="space-y-3 text-left">
               <div>
+                <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1">
+                  Kurum / AKD Sınıf Kodu *
+                </label>
+                <input
+                  type="text"
+                  value={classCode}
+                  onChange={e => {
+                    setClassCode(e.target.value.toUpperCase());
+                    setErrorMessage('');
+                  }}
+                  placeholder="AKD-XXXX"
+                  className="w-full py-2.5 px-3 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/10 dark:border-white/10 text-neutral-900 dark:text-white font-mono font-bold text-sm text-center uppercase tracking-widest"
+                  autoFocus
+                  required
+                />
+              </div>
+
+              <div>
                 <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1 flex items-center gap-1">
                   <Hash className="w-3.5 h-3.5 text-blue-500" />
-                  <span>5 Haneli Öğrenci No</span>
+                  <span>5 Haneli Öğrenci No *</span>
                 </label>
                 <input
                   type="text"
@@ -164,7 +189,7 @@ export const LoginModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
                   }}
                   placeholder="10000"
                   className="w-full py-2.5 px-3 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/10 dark:border-white/10 text-neutral-900 dark:text-white font-mono font-bold text-base text-center tracking-widest"
-                  autoFocus
+                  required
                 />
               </div>
 

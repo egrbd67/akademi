@@ -1,6 +1,0 @@
-{
-  "summary":  "Tüm istekler başarıyla tamamlandı:\n1. Öğretmenler için Ad Soyad ve Şifre ile giriş sistemi kuruldu (hem giriş ekranında hem hesap değiştirme modalında).\n2. Odak modundaki ve sayaç modalındaki geri sayım dakikası kullanıcının istediği sınırsız süreye ayarlanabilir yapıldı (1-1440 dakika).\n3. Hesap değiştirme ve tema pencerelerinin ekranın üstünden taşması/kırpılması problemi çözüldü (Sticky header dışına root seviyeye taşındı, overflow-y-auto ve my-auto ile tam ortalandı).\n4. Sınıf, öğretmen, öğrenci ve ders silme işlemlerindeki tarayıcı iframe sandbox engeli giderildi; Firestore güvenlik kuralları güncellendi ve deploy edildi, silme butonlarına 2 adımlı güvenli arayüz onay mekanizması eklendi.",
-  "updatedAt":  "2026-11-09T20:09:28.572521951Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

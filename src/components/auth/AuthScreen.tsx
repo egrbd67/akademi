@@ -20,7 +20,6 @@ export const AuthScreen: React.FC = () => {
     registerTeacherAccount,
     loginTeacherCredentials,
     loginStudentWithClassCode,
-    loginStudentDirect,
     boxTheme
   } = useApp();
 
@@ -39,11 +38,10 @@ export const AuthScreen: React.FC = () => {
   const [regPassword, setRegPassword] = useState('');
   const [regBranch, setRegBranch] = useState('Matematik');
 
-  // Student join inputs
+  // Student join inputs (AKD code is strictly mandatory)
   const [classCode, setClassCode] = useState('');
   const [studentNumber, setStudentNumber] = useState('');
   const [password, setPassword] = useState('');
-  const [isDirectLogin, setIsDirectLogin] = useState(false);
 
   // Status
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -127,43 +125,26 @@ export const AuthScreen: React.FC = () => {
     e.preventDefault();
     setErrorMsg(null);
 
-    if (isDirectLogin) {
-      if (studentNumber.length < 5 || password.length < 4) {
-        setErrorMsg('Lütfen 5 haneli Numara ve 4 haneli Şifrenizi girin.');
-        return;
-      }
-      setIsLoading(true);
-      try {
-        const res = await loginStudentDirect(studentNumber, password);
-        if (!res.success) {
-          setErrorMsg(res.message || 'Geçersiz 5 haneli Numara veya 4 haneli Şifre!');
-        }
-      } catch {
-        setErrorMsg('Öğrenci girişi doğrulanırken hata oluştu.');
-      } finally {
-        setIsLoading(false);
-      }
-    } else {
-      if (!classCode.trim()) {
-        setErrorMsg('Lütfen Sınıf Kodunu girin.');
-        return;
-      }
-      if (studentNumber.length < 5 || password.length < 4) {
-        setErrorMsg('Lütfen 5 haneli Numara ve 4 haneli Şifrenizi girin.');
-        return;
-      }
+    const cleanCode = classCode.trim().toUpperCase();
+    if (!cleanCode) {
+      setErrorMsg('Lütfen kurumunuzdan/öğretmeninizden aldığınız AKD Sınıf Kodunu girin.');
+      return;
+    }
+    if (studentNumber.length < 5 || password.length < 4) {
+      setErrorMsg('Lütfen 5 haneli Numara ve 4 haneli Şifrenizi girin.');
+      return;
+    }
 
-      setIsLoading(true);
-      try {
-        const res = await loginStudentWithClassCode(classCode, studentNumber, password);
-        if (!res.success) {
-          setErrorMsg(res.message || 'Giriş bilgileri hatalı veya sınıf bulunamadı.');
-        }
-      } catch {
-        setErrorMsg('Giriş doğrulanırken hata oluştu.');
-      } finally {
-        setIsLoading(false);
+    setIsLoading(true);
+    try {
+      const res = await loginStudentWithClassCode(cleanCode, studentNumber, password);
+      if (!res.success) {
+        setErrorMsg(res.message || 'Giriş bilgileri hatalı veya sınıf bulunamadı.');
       }
+    } catch {
+      setErrorMsg('Giriş doğrulanırken hata oluştu.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -442,25 +423,26 @@ export const AuthScreen: React.FC = () => {
           {/* ÖĞRENCİ GİRİŞİ */}
           {activeTab === 'student' && (
             <form onSubmit={handleStudentLogin} className="space-y-4 text-left">
-              {!isDirectLogin && (
-                <div>
-                  <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1 flex items-center gap-1">
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
                     <Layers className="w-3.5 h-3.5 text-indigo-500" />
-                    <span>Sınıf Kodu *</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={classCode}
-                    onChange={e => {
-                      setClassCode(e.target.value.toUpperCase());
-                      setErrorMsg(null);
-                    }}
-                    placeholder="AKD-0000"
-                    className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/10 dark:border-white/10 text-xs font-mono font-bold tracking-wider text-neutral-900 dark:text-white uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-              )}
+                    <span>Kurum / AKD Sınıf Kodu *</span>
+                  </span>
+                  <span className="text-[10px] text-neutral-400 font-normal">Öğretmeninizden aldığınız kod</span>
+                </label>
+                <input
+                  type="text"
+                  value={classCode}
+                  onChange={e => {
+                    setClassCode(e.target.value.toUpperCase());
+                    setErrorMsg(null);
+                  }}
+                  placeholder="AKD-XXXX"
+                  className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/10 dark:border-white/10 text-xs font-mono font-bold tracking-wider text-neutral-900 dark:text-white uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -500,16 +482,6 @@ export const AuthScreen: React.FC = () => {
                     required
                   />
                 </div>
-              </div>
-
-              <div className="flex items-center justify-between text-[11px] text-neutral-400">
-                <button
-                  type="button"
-                  onClick={() => setIsDirectLogin(!isDirectLogin)}
-                  className="hover:text-blue-500 underline cursor-pointer"
-                >
-                  {isDirectLogin ? 'Sınıf Kodu ile Katıl' : 'Sınıf Kodum Yok, Doğrudan No ile Gir'}
-                </button>
               </div>
 
               {errorMsg && (

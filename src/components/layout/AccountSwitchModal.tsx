@@ -77,7 +77,8 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
   const [teacherLoginSuccess, setTeacherLoginSuccess] = useState<string | null>(null);
   const [isTeacherLoading, setIsTeacherLoading] = useState(false);
 
-  // Student 5-digit number and 4-digit password input state
+  // Student class code, 5-digit number and 4-digit password input state
+  const [classCodeInput, setClassCodeInput] = useState('');
   const [studentNumberInput, setStudentNumberInput] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -122,6 +123,11 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
 
   const handleStudentCredentialLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanCode = classCodeInput.trim().toUpperCase();
+    if (!cleanCode) {
+      setLoginError('Lütfen kurumunuzdan aldığınız AKD Sınıf Kodunu girin.');
+      return;
+    }
     if (!studentNumberInput.trim() || !passwordInput.trim()) return;
 
     setLoginError(null);
@@ -130,6 +136,7 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
 
     try {
       const res = await cloudLoginWithStudentCredentials(
+        cleanCode,
         studentNumberInput.trim(),
         passwordInput.trim()
       );
@@ -137,7 +144,7 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
         setLoginSuccess(`Giriş başarılı: ${res.student.name}`);
         setTimeout(() => onClose(), 500);
       } else {
-        setLoginError(res.message || 'Geçersiz 5 haneli Numara veya 4 haneli Şifre!');
+        setLoginError(res.message || 'Geçersiz Sınıf Kodu, 5 haneli Numara veya 4 haneli Şifre!');
       }
     } catch {
       setLoginError('Bağlantı hatası oluştu.');
@@ -525,9 +532,30 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
                                 </div>
 
                                 <div className="flex items-center gap-2 flex-wrap text-[11px] text-neutral-500 mt-0.5">
+                                  {(() => {
+                                    const stCls = classrooms.find(c => (st.classroomIds || []).includes(c.id));
+                                    const akdCode = stCls?.code || classrooms[0]?.code;
+                                    if (!akdCode) return null;
+                                    return (
+                                      <span
+                                        onClick={e => handleCopy(e, akdCode, 'akd')}
+                                        className="font-mono font-bold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded text-[10px] inline-flex items-center gap-1 cursor-pointer"
+                                        title="Sınıf AKD Kodunu Kopyala"
+                                      >
+                                        AKD: {akdCode}
+                                        {copiedBadge === `akd-${akdCode}` ? (
+                                          <Check className="w-2.5 h-2.5 text-emerald-500" />
+                                        ) : (
+                                          <Copy className="w-2.5 h-2.5 opacity-60" />
+                                        )}
+                                      </span>
+                                    );
+                                  })()}
+
                                   <span
                                     onClick={e => handleCopy(e, stdNo, 'no')}
-                                    className="font-mono font-bold bg-neutral-200/80 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-[10px] text-neutral-800 dark:text-neutral-200 inline-flex items-center gap-1"
+                                    className="font-mono font-bold bg-neutral-200/80 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-[10px] text-neutral-800 dark:text-neutral-200 inline-flex items-center gap-1 cursor-pointer"
+                                    title="Öğrenci Numarasını Kopyala"
                                   >
                                     No: {stdNo}
                                     {copiedBadge === `no-${stdNo}` ? (
@@ -539,7 +567,8 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
 
                                   <span
                                     onClick={e => handleCopy(e, stdPass, 'pw')}
-                                    className="font-mono font-bold bg-neutral-200/80 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-[10px] text-neutral-800 dark:text-neutral-200 inline-flex items-center gap-1"
+                                    className="font-mono font-bold bg-neutral-200/80 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-[10px] text-neutral-800 dark:text-neutral-200 inline-flex items-center gap-1 cursor-pointer"
+                                    title="Şifreyi Kopyala"
                                   >
                                     Şifre: {stdPass}
                                     {copiedBadge === `pw-${stdPass}` ? (
@@ -827,16 +856,36 @@ export const AccountSwitchModal: React.FC<AccountSwitchModalProps> = ({
                     Öğrenci Girişi
                   </h3>
                   <p className="text-xs text-neutral-500">
-                    5 haneli numara ve 4 haneli şifrenizi girin.
+                    AKD kodu, 5 haneli numara ve 4 haneli şifrenizi girin.
                   </p>
                 </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Layers className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>Kurum / AKD Sınıf Kodu *</span>
+                  </span>
+                  <span className="text-[10px] text-neutral-400 font-normal">Öğretmeninizden aldığınız kod</span>
+                </label>
+                <input
+                  type="text"
+                  value={classCodeInput}
+                  onChange={e => {
+                    setClassCodeInput(e.target.value.toUpperCase());
+                    setLoginError(null);
+                  }}
+                  placeholder="AKD-XXXX"
+                  className="w-full p-2.5 rounded-xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 text-xs font-mono font-bold tracking-wider text-neutral-900 dark:text-white uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1 flex items-center gap-1">
                     <Hash className="w-3.5 h-3.5 text-blue-500" />
-                    <span>5 Haneli Öğrenci No</span>
+                    <span>5 Haneli Öğrenci No *</span>
                   </label>
                   <input
                     type="text"

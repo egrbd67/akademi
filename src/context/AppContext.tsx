@@ -31,6 +31,7 @@ import {
   updateClassroomInFirestore,
   deleteClassroomFromFirestore,
   saveTeacherToFirestore,
+  updateTeacherInFirestore,
   deleteTeacherFromFirestore,
   saveActivityLogToFirestore,
   saveScheduleItemToFirestore,
@@ -73,8 +74,7 @@ interface AppContextType {
   registerTeacherAccount: (params: { username: string; name: string; password: string; branch?: string }) => Promise<{ success: boolean; error?: string; teacher?: Teacher }>;
   loginTeacherCredentials: (usernameOrName: string, password: string, branch?: string) => Promise<{ success: boolean; error?: string; teacher?: Teacher }>;
   loginStudentWithClassCode: (classCode: string, studentNumber: string, password: string) => Promise<{ success: boolean; message?: string; student?: Student }>;
-  loginStudentDirect: (studentNumber: string, password: string) => Promise<{ success: boolean; message?: string; student?: Student }>;
-  cloudLoginWithStudentCredentials: (studentNumber: string, password: string) => Promise<{ success: boolean; message?: string; student?: Student }>;
+  cloudLoginWithStudentCredentials: (classCode: string, studentNumber: string, password: string) => Promise<{ success: boolean; message?: string; student?: Student }>;
   logout: () => Promise<void>;
 
   // Theme
@@ -112,6 +112,7 @@ interface AppContextType {
   schedules: ScheduleItem[];
   addScheduleItem: (item: Omit<ScheduleItem, 'id'>) => Promise<string>;
   updateScheduleItem: (id: string, updates: Partial<ScheduleItem>) => Promise<void>;
+  toggleScheduleItemCompletion: (id: string) => Promise<void>;
   deleteScheduleItem: (id: string) => Promise<void>;
 
   // Templates
@@ -217,15 +218,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return (saved as BoxColorTheme) || 'blue';
   });
 
-  const setBgTheme = useCallback((theme: BackgroundTheme) => {
-    setBgThemeState(theme);
-    localStorage.setItem(`${STORAGE_PREFIX}bg_theme`, theme);
-  }, []);
-
-  const setBoxTheme = useCallback((theme: BoxColorTheme) => {
-    setBoxThemeState(theme);
-    localStorage.setItem(`${STORAGE_PREFIX}box_theme`, theme);
-  }, []);
 
   // Auth & Roles
   const [isAuthReady, setIsAuthReady] = useState<boolean>(false);
@@ -300,9 +292,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(`${STORAGE_PREFIX}dark_mode`, isDarkMode ? 'true' : 'false');
   }, [isDarkMode]);
 
-  const toggleDarkMode = useCallback(() => {
-    setIsDarkMode(prev => !prev);
-  }, []);
+
 
   // Subscribe to all Firestore collections in real time
   useEffect(() => {
@@ -453,6 +443,93 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return currentStudent?.teacherUid || currentTeacher?.id || firebaseUser?.uid || '';
   }, [role, currentTeacher, firebaseUser, currentStudent]);
 
+  // Cloud Sync for Theme Preferences (cross-device & session persistence)
+  const syncThemeConfigToCloud = useCallback(async (updates: { bgTheme?: BackgroundTheme; boxTheme?: BoxColorTheme; isDarkMode?: boolean }) => {
+    const effectiveBg = updates.bgTheme ?? bgTheme;
+    const effectiveBox = updates.boxTheme ?? boxTheme;
+    const effectiveDark = updates.isDarkMode ?? isDarkMode;
+    const newConfig = {
+      bgTheme: effectiveBg,
+      boxTheme: effectiveBox,
+      isDarkMode: effectiveDark,
+    };
+
+    if (role === 'teacher' && currentTeacher?.id) {
+      try {
+        await updateTeacherInFirestore(currentTeacher.id, { themeConfig: newConfig });
+        setCurrentTeacher(prev => prev ? { ...prev, themeConfig: newConfig } : null);
+        const stored = localStorage.getItem(`${STORAGE_PREFIX}teacher_session`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          localStorage.setItem(`${STORAGE_PREFIX}teacher_session`, JSON.stringify({ ...parsed, themeConfig: newConfig }));
+        }
+      } catch (err) {
+        console.warn('Teacher theme sync to Firestore failed:', err);
+      }
+    } else if (role === 'student' && currentStudent?.id) {
+      try {
+        await updateStudentInFirestore(currentStudent.id, { themeConfig: newConfig });
+        setSavedStudentSession(prev => prev ? { ...prev, themeConfig: newConfig } : null);
+        const stored = localStorage.getItem(`${STORAGE_PREFIX}student_session`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          localStorage.setItem(`${STORAGE_PREFIX}student_session`, JSON.stringify({ ...parsed, themeConfig: newConfig }));
+        }
+      } catch (err) {
+        console.warn('Student theme sync to Firestore failed:', err);
+      }
+    }
+  }, [role, currentTeacher, currentStudent, bgTheme, boxTheme, isDarkMode]);
+
+  const setBgTheme = useCallback((theme: BackgroundTheme) => {
+    setBgThemeState(theme);
+    localStorage.setItem(`${STORAGE_PREFIX}bg_theme`, theme);
+    syncThemeConfigToCloud({ bgTheme: theme });
+  }, [syncThemeConfigToCloud]);
+
+  const setBoxTheme = useCallback((theme: BoxColorTheme) => {
+    setBoxThemeState(theme);
+    localStorage.setItem(`${STORAGE_PREFIX}box_theme`, theme);
+    syncThemeConfigToCloud({ boxTheme: theme });
+  }, [syncThemeConfigToCloud]);
+
+  const toggleDarkMode = useCallback(() => {
+    setIsDarkMode(prev => {
+      const next = !prev;
+      syncThemeConfigToCloud({ isDarkMode: next });
+      return next;
+    });
+  }, [syncThemeConfigToCloud]);
+
+  // Synchronize theme preferences across devices when profile is loaded or changed in Firestore
+  useEffect(() => {
+    const activeConfig = role === 'teacher' ? currentTeacher?.themeConfig : currentStudent?.themeConfig;
+    if (activeConfig) {
+      if (activeConfig.bgTheme && activeConfig.bgTheme !== bgTheme) {
+        setBgThemeState(activeConfig.bgTheme);
+        localStorage.setItem(`${STORAGE_PREFIX}bg_theme`, activeConfig.bgTheme);
+      }
+      if (activeConfig.boxTheme && activeConfig.boxTheme !== boxTheme) {
+        setBoxThemeState(activeConfig.boxTheme);
+        localStorage.setItem(`${STORAGE_PREFIX}box_theme`, activeConfig.boxTheme);
+      }
+      if (typeof activeConfig.isDarkMode === 'boolean' && activeConfig.isDarkMode !== isDarkMode) {
+        setIsDarkMode(activeConfig.isDarkMode);
+        localStorage.setItem(`${STORAGE_PREFIX}dark_mode`, activeConfig.isDarkMode ? 'true' : 'false');
+      }
+    }
+  }, [
+    role,
+    currentTeacher?.id,
+    currentTeacher?.themeConfig?.bgTheme,
+    currentTeacher?.themeConfig?.boxTheme,
+    currentTeacher?.themeConfig?.isDarkMode,
+    currentStudent?.id,
+    currentStudent?.themeConfig?.bgTheme,
+    currentStudent?.themeConfig?.boxTheme,
+    currentStudent?.themeConfig?.isDarkMode
+  ]);
+
   // Strictly isolated collections per teacher account
   const teachers = useMemo(() => {
     if (!currentTeacher) return [];
@@ -570,6 +647,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         authProvider: 'google',
         createdAt: existing?.createdAt || new Date().toISOString()
       };
+      if (existing?.themeConfig) {
+        if (existing.themeConfig.bgTheme) setBgThemeState(existing.themeConfig.bgTheme);
+        if (existing.themeConfig.boxTheme) setBoxThemeState(existing.themeConfig.boxTheme);
+        if (typeof existing.themeConfig.isDarkMode === 'boolean') setIsDarkMode(existing.themeConfig.isDarkMode);
+      }
       await saveTeacherToFirestore(teacherProfile);
       setCurrentTeacher(teacherProfile);
       setRoleState('teacher');
@@ -696,6 +778,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setFirebaseUser(null);
     }
 
+    if (existing.themeConfig) {
+      if (existing.themeConfig.bgTheme) setBgThemeState(existing.themeConfig.bgTheme);
+      if (existing.themeConfig.boxTheme) setBoxThemeState(existing.themeConfig.boxTheme);
+      if (typeof existing.themeConfig.isDarkMode === 'boolean') setIsDarkMode(existing.themeConfig.isDarkMode);
+    }
+
     setCurrentTeacher(updatedTeacher);
     setRoleState('teacher');
     setSavedStudentSession(null);
@@ -748,6 +836,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
 
+    // Apply student's personal saved theme across devices
+    if (matched.themeConfig) {
+      if (matched.themeConfig.bgTheme) setBgThemeState(matched.themeConfig.bgTheme);
+      if (matched.themeConfig.boxTheme) setBoxThemeState(matched.themeConfig.boxTheme);
+      if (typeof matched.themeConfig.isDarkMode === 'boolean') setIsDarkMode(matched.themeConfig.isDarkMode);
+    }
+
     // Log student activity
     const activityId = `act_${Date.now()}`;
     await saveActivityLogToFirestore({
@@ -777,51 +872,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     return { success: true, student: updatedStudent };
   }, [rawClassrooms, rawStudents]);
-
-  // Direct Student Login (Student Number + Password)
-  const loginStudentDirect = useCallback(async (studentNumber: string, password: string) => {
-    const cleanNo = studentNumber.trim();
-    const cleanPass = password.trim();
-
-    const matched = rawStudents.find(s => {
-      const matchNum = (s.studentNumber || s.pin.substring(0, 5)).trim() === cleanNo;
-      const matchPass = (s.password || s.pin.substring(s.pin.length - 4)).trim() === cleanPass;
-      return matchNum && matchPass;
-    });
-
-    if (!matched) {
-      return { success: false, message: 'Geçersiz 5 haneli öğrenci numarası veya 4 haneli şifre!' };
-    }
-
-    if (auth.currentUser) {
-      try {
-        await signOut(auth);
-      } catch {}
-    }
-    setFirebaseUser(null);
-    setCurrentTeacher(null);
-    localStorage.removeItem(`${STORAGE_PREFIX}teacher_session`);
-
-    setSavedStudentSession(matched);
-    setCurrentStudentIdState(matched.id);
-    setRoleState('student');
-    localStorage.setItem(`${STORAGE_PREFIX}student_session`, JSON.stringify(matched));
-
-    // Log activity
-    const activityId = `act_${Date.now()}`;
-    await saveActivityLogToFirestore({
-      id: activityId,
-      studentId: matched.id,
-      studentName: matched.name,
-      teacherUid: matched.teacherUid,
-      type: 'streak_active',
-      title: 'Öğrenci Giriş Yaptı',
-      detail: `${matched.name} sisteme giriş yaptı ve çalışma paneline bağlandı.`,
-      timestamp: new Date().toISOString()
-    });
-
-    return { success: true, student: matched };
-  }, [rawStudents]);
 
   // Logout (Immediately clears session state & signs out of Firebase)
   const logout = useCallback(async () => {
@@ -960,6 +1010,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRawSchedules(prev => prev.map(s => s.id === id ? { ...s, ...updates, updatedAt } : s));
     await updateScheduleItemInFirestore(id, { ...updates, updatedAt });
   }, []);
+
+  const toggleScheduleItemCompletion = useCallback(async (id: string) => {
+    const item = rawSchedules.find(s => s.id === id);
+    if (!item) return;
+    const newStatus = item.status === 'completed' ? 'pending' : 'completed';
+    const updatedAt = new Date().toISOString();
+    setRawSchedules(prev => prev.map(s => s.id === id ? { ...s, status: newStatus, updatedAt } : s));
+    await updateScheduleItemInFirestore(id, { status: newStatus, updatedAt });
+
+    // When a student marks a lesson completed, write a friendly activity log entry
+    if (newStatus === 'completed' && currentStudent) {
+      await logActivity({
+        studentId: currentStudent.id,
+        studentName: currentStudent.name,
+        teacherUid: activeTeacherId,
+        type: 'focus_completed',
+        title: `${item.subject} • Oturum Tamamlandı`,
+        detail: `${currentStudent.name}, ${item.subject} - ${item.topic || 'Ders'} oturumunu başarıyla tamamladı olarak işaretledi.`
+      });
+    }
+  }, [rawSchedules, currentStudent, activeTeacherId, logActivity]);
 
   const deleteScheduleItem = useCallback(async (id: string) => {
     setRawSchedules(prev => prev.filter(s => s.id !== id));
@@ -1467,8 +1538,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         registerTeacherAccount,
         loginTeacherCredentials,
         loginStudentWithClassCode,
-        loginStudentDirect,
-        cloudLoginWithStudentCredentials: loginStudentDirect,
+        cloudLoginWithStudentCredentials: loginStudentWithClassCode,
         logout,
         isDarkMode,
         toggleDarkMode,
@@ -1494,6 +1564,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         schedules,
         addScheduleItem,
         updateScheduleItem,
+        toggleScheduleItemCompletion,
         deleteScheduleItem,
         templates,
         addTemplate,

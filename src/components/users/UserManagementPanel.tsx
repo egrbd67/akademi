@@ -1194,8 +1194,33 @@ export const UserManagementPanel: React.FC<UserManagementPanelProps> = ({ onNavi
                       </div>
                     </div>
 
-                    {/* 5-Digit Number & 4-Digit Password Badges */}
+                    {/* AKD Code, 5-Digit Number & 4-Digit Password Badges */}
                     <div className="flex flex-col items-end gap-1">
+                      {(() => {
+                        const stCls = classrooms.find(c => (st.classroomIds || []).includes(c.id));
+                        const akdCode = stCls?.code || classrooms[0]?.code;
+                        if (!akdCode) return null;
+                        return (
+                          <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-500/20 text-xs">
+                            <span className="text-[10px] text-indigo-500 dark:text-indigo-400 font-bold">AKD:</span>
+                            <span className="font-mono font-extrabold text-indigo-600 dark:text-indigo-300 tracking-wider">
+                              {akdCode}
+                            </span>
+                            <button
+                              onClick={() => handleCopyCreds(akdCode, 'akd')}
+                              className="text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-200 transition-colors ml-0.5 cursor-pointer"
+                              title="AKD Sınıf Kodunu Kopyala"
+                            >
+                              {copiedBadge === `akd-${akdCode}` ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        );
+                      })()}
+
                       <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 text-xs">
                         <span className="text-[10px] text-neutral-400 font-bold">No:</span>
                         <span className="font-mono font-extrabold text-neutral-900 dark:text-white tracking-wider">

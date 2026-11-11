@@ -25,6 +25,11 @@ export interface Student {
   phone: string;
   notes: string;
   classroomIds?: string[]; // Birden fazla sınıfta bulunabilir
+  themeConfig?: {
+    bgTheme: BackgroundTheme;
+    boxTheme: BoxColorTheme;
+    isDarkMode: boolean;
+  };
   streak: {
     count: number;
     status: StreakStatus;
@@ -49,6 +54,11 @@ export interface Teacher {
   phone?: string;
   authProvider?: 'password' | 'google';
   classroomIds?: string[];
+  themeConfig?: {
+    bgTheme: BackgroundTheme;
+    boxTheme: BoxColorTheme;
+    isDarkMode: boolean;
+  };
   createdAt?: string;
 }
 

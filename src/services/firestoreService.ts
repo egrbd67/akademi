@@ -173,6 +173,15 @@ export async function saveTeacherToFirestore(teacher: Teacher) {
   }
 }
 
+export async function updateTeacherInFirestore(id: string, updates: Partial<Teacher>) {
+  const path = `teachers/${id}`;
+  try {
+    await updateDoc(doc(db, 'teachers', id), cleanForFirestore(updates));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
 export async function deleteTeacherFromFirestore(id: string) {
   const path = `teachers/${id}`;
   try {

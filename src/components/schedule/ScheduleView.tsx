@@ -25,7 +25,11 @@ import {
   Minus,
   Upload,
   Download,
-  FileCode
+  FileCode,
+  Check,
+  Circle,
+  ClipboardPaste,
+  X
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ScheduleItem } from '../../types';
@@ -58,6 +62,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
     schedules,
     addScheduleItem,
     updateScheduleItem,
+    toggleScheduleItemCompletion,
     deleteScheduleItem,
     templates,
     addTemplate,
@@ -69,14 +74,32 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
 
   const selectedBoxTheme = BOX_THEMES.find(b => b.id === boxTheme) || BOX_THEMES[0];
 
+  // Today Day of Week computation (1 = Pazartesi, 2 = Salı, ..., 7 = Pazar)
+  const todayDayOfWeek = useMemo(() => {
+    const d = new Date().getDay();
+    return d === 0 ? 7 : d;
+  }, []);
+  const todayName = DAY_NAMES[todayDayOfWeek];
+
   const [selectedDay, setSelectedDay] = useState<number>(0); // 0 = all
   const [selectedWeek, setSelectedWeek] = useState<1 | 2>(1); // 1 = 1. Hafta, 2 = 2. Hafta
   const [viewMode, setViewMode] = useState<'matrix' | 'cards'>('matrix'); // Default: Dikey A4 Oturum Matrisi
+  const [completionFilter, setCompletionFilter] = useState<'all' | 'completed' | 'pending'>('all'); // Oturum tamamlama filtresi
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isSaveTemplateModalOpen, setIsSaveTemplateModalOpen] = useState(false);
   const [isApplyTemplateModalOpen, setIsApplyTemplateModalOpen] = useState(false);
   const [copiedAlert, setCopiedAlert] = useState(false);
   const [jsonNotice, setJsonNotice] = useState<string | null>(null);
+  const [copiedSession, setCopiedSession] = useState<{
+    subject: string;
+    topic: string;
+    timeRange?: string;
+    sourceBook?: string;
+    targetType?: 'question' | 'duration';
+    targetValue?: number;
+    teacherNote?: string;
+  } | null>(null);
+  const [clipboardNotice, setClipboardNotice] = useState<string | null>(null);
 
   // New item form state (with sessionNumber and optional time)
   const [targetStudentId, setTargetStudentId] = useState<string>(currentStudentId || (students[0]?.id || ''));
@@ -176,6 +199,33 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
     return { total, completed, totalQuestions, totalMinutes, completionRate };
   }, [studentSchedules]);
 
+  // Selected week day-by-day session completion breakdown
+  const weekDayBreakdown = useMemo(() => {
+    return [1, 2, 3, 4, 5, 6, 7].map(day => {
+      const dayItems = currentWeekSchedules.filter(s => s.dayOfWeek === day);
+      const totalCount = dayItems.length;
+      const completedCount = dayItems.filter(s => s.status === 'completed').length;
+      return {
+        day,
+        name: DAY_NAMES[day],
+        isToday: day === todayDayOfWeek,
+        totalCount,
+        completedCount,
+        isAllDone: totalCount > 0 && completedCount === totalCount,
+        isPartial: completedCount > 0 && completedCount < totalCount,
+      };
+    });
+  }, [currentWeekSchedules, todayDayOfWeek]);
+
+  // Current week specific completion metrics
+  const currentWeekStats = useMemo(() => {
+    const total = currentWeekSchedules.length;
+    const completed = currentWeekSchedules.filter(s => s.status === 'completed').length;
+    const pending = total - completed;
+    const rate = total > 0 ? Math.round((completed / total) * 100) : 0;
+    return { total, completed, pending, rate };
+  }, [currentWeekSchedules]);
+
   // Open modal with specific day and session prefilled
   const handleOpenAddForSlot = (day: number, session: number) => {
     setNewItemWeek(String(selectedWeek) as '1' | '2');
@@ -186,6 +236,56 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
     setNewItemSource('');
     setNewItemNote('');
     setIsAddModalOpen(true);
+  };
+
+  // Copy session to memory
+  const handleCopySession = (item: ScheduleItem) => {
+    setCopiedSession({
+      subject: item.subject,
+      topic: item.topic,
+      timeRange: item.timeRange,
+      sourceBook: item.sourceBook,
+      targetType: item.targetType,
+      targetValue: item.targetValue,
+      teacherNote: item.teacherNote,
+    });
+    setClipboardNotice(`"${item.subject} • ${item.topic || 'Ders'}" oturumu kopyalandı! İstediğiniz gün veya oturumdaki "Yapıştır" butonuna tıklayarak aktarabilirsiniz.`);
+    setTimeout(() => setClipboardNotice(null), 5000);
+  };
+
+  // Paste copied session into target day and session
+  const handlePasteSession = async (targetDay: number, targetSessionNumber?: number) => {
+    if (!copiedSession || !activeStudent) return;
+
+    let sessionNum = targetSessionNumber;
+    if (!sessionNum) {
+      const dayItems = currentWeekSchedules.filter(s => s.dayOfWeek === targetDay);
+      sessionNum = dayItems.length + 1;
+    }
+
+    await addScheduleItem({
+      studentId: activeStudent.id,
+      weekNumber: selectedWeek,
+      dayOfWeek: targetDay,
+      sessionNumber: sessionNum,
+      subject: copiedSession.subject,
+      topic: copiedSession.topic,
+      timeRange: copiedSession.timeRange || '',
+      sourceBook: copiedSession.sourceBook || '',
+      targetType: copiedSession.targetType || 'question',
+      targetValue: copiedSession.targetValue || 40,
+      actualDurationMinutes: 0,
+      teacherNote: copiedSession.teacherNote || '',
+      status: 'pending',
+    });
+
+    setClipboardNotice(`"${copiedSession.subject}" oturumu ${DAY_NAMES[targetDay]} ${sessionNum}. Oturuma başarıyla yapıştırıldı!`);
+    setTimeout(() => setClipboardNotice(null), 3500);
+  };
+
+  const handleClearCopiedSession = () => {
+    setCopiedSession(null);
+    setClipboardNotice(null);
   };
 
   // If no student exists at all
@@ -388,6 +488,13 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                 <span>{activeStudent.name} (PIN: {activeStudent.pin})</span>
               </div>
             ) : null}
+
+            {/* Today Indicator Badge */}
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-2xl bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30 text-xs font-extrabold shadow-2xs">
+              <Calendar className="w-3.5 h-3.5 text-blue-500 animate-pulse" />
+              <span>Bugün: {todayName}</span>
+              <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-600 text-white font-mono">{todayDayOfWeek}. Gün</span>
+            </div>
           </div>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
             Dikey A4 ve Excel uyumlu oturum matrisi. Her güne 1, 2, 3... oturum ekleyin, saat isteğe bağlıdır.
@@ -516,6 +623,56 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
         </div>
       )}
 
+      {clipboardNotice && (
+        <div className="p-3 rounded-2xl bg-blue-500/15 border border-blue-500/30 text-blue-700 dark:text-blue-300 text-xs font-semibold flex items-center justify-between gap-2 animate-in fade-in no-print">
+          <div className="flex items-center gap-2">
+            <ClipboardPaste className="w-4 h-4 text-blue-500" />
+            <span>{clipboardNotice}</span>
+          </div>
+          <button
+            onClick={() => setClipboardNotice(null)}
+            className="p-1 hover:bg-blue-500/20 rounded-lg text-blue-600 dark:text-blue-400"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {copiedSession && (
+        <div className="p-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 no-print">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-white/20 backdrop-blur-xs shrink-0">
+              <ClipboardPaste className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <div className="text-xs font-black tracking-wide flex items-center gap-1.5 flex-wrap">
+                <span>Kopyalanan Oturum:</span>
+                <span className="bg-white/20 px-2 py-0.5 rounded-md font-mono">{copiedSession.subject} • {copiedSession.topic || 'Ders'}</span>
+              </div>
+              <p className="text-[11px] text-white/80 mt-0.5">
+                İstediğiniz günün boş oturumundaki veya gün kenarındaki "Yapıştır" simgesine tıklayarak bu oturumu aktarabilirsiniz.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => handlePasteSession(todayDayOfWeek)}
+              className="px-3 py-1.5 rounded-xl bg-white text-blue-700 font-extrabold text-xs shadow-xs hover:bg-neutral-100 transition-all active:scale-95 cursor-pointer flex items-center gap-1"
+            >
+              <ClipboardPaste className="w-3.5 h-3.5 text-blue-600" />
+              <span>Bugüne ({todayName}) Yapıştır</span>
+            </button>
+            <button
+              onClick={handleClearCopiedSession}
+              className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-all cursor-pointer"
+              title="Kopyalamayı İptal Et / Panoyu Temizle"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Summary Mini Bar (No print) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 no-print">
         <div className="p-3.5 rounded-2xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 text-center">
@@ -541,6 +698,138 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
           <div className="text-lg font-extrabold text-indigo-500 font-mono mt-0.5">
             {Math.floor(stats.totalMinutes / 60)}s {stats.totalMinutes % 60}d
           </div>
+        </div>
+      </div>
+
+      {/* Haftalık Oturum Takip Paneli (Öğretmen ve Öğrenci için Günlük Takip ve Tamamlama Durumu) */}
+      <div className="p-4 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 shadow-xs space-y-3.5 no-print">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div
+              style={{ backgroundColor: `${selectedBoxTheme.accentColor}18`, color: selectedBoxTheme.accentColor }}
+              className="w-9 h-9 rounded-2xl flex items-center justify-center font-bold shrink-0"
+            >
+              <Target className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-extrabold text-neutral-900 dark:text-white">
+                  {selectedWeek}. Hafta Oturum Takip Çizelgesi
+                </h2>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                  {role === 'teacher' ? 'Öğretmen Takip Görünümü' : 'Öğrenci Program Takibi'}
+                </span>
+              </div>
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                {activeStudent?.name} için bu haftaki oturumların tamamlanma durumunu gün gün inceleyin.
+              </p>
+            </div>
+          </div>
+
+          {/* Completion Ratio Pill & Filter Switcher */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-neutral-100 dark:bg-neutral-800/80 border border-black/5 dark:border-white/5 text-xs font-bold">
+              <span className="text-neutral-500 dark:text-neutral-400">Bu Hafta:</span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-mono">
+                {currentWeekStats.completed}/{currentWeekStats.total} Tamamlandı
+              </span>
+              <span className="text-neutral-400 font-mono">(%{currentWeekStats.rate})</span>
+            </div>
+
+            {/* Completion Filter Tabs */}
+            <div className="flex p-0.5 rounded-2xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setCompletionFilter('all')}
+                className={`px-2.5 py-1 rounded-xl transition-all cursor-pointer ${
+                  completionFilter === 'all'
+                    ? 'bg-white dark:bg-[#1C1C1E] text-neutral-900 dark:text-white shadow-2xs'
+                    : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
+                }`}
+              >
+                Tümü ({currentWeekStats.total})
+              </button>
+              <button
+                type="button"
+                onClick={() => setCompletionFilter('completed')}
+                className={`px-2.5 py-1 rounded-xl transition-all cursor-pointer flex items-center gap-1 ${
+                  completionFilter === 'completed'
+                    ? 'bg-emerald-500 text-white shadow-2xs'
+                    : 'text-emerald-600 hover:text-emerald-700'
+                }`}
+              >
+                <CheckCircle2 className="w-3 h-3" />
+                <span>Yapılanlar ({currentWeekStats.completed})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCompletionFilter('pending')}
+                className={`px-2.5 py-1 rounded-xl transition-all cursor-pointer flex items-center gap-1 ${
+                  completionFilter === 'pending'
+                    ? 'bg-amber-500 text-white shadow-2xs'
+                    : 'text-neutral-500 hover:text-amber-600'
+                }`}
+              >
+                <Clock className="w-3 h-3" />
+                <span>Bekleyenler ({currentWeekStats.pending})</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Progress Bar */}
+        <div className="space-y-1">
+          <div className="w-full bg-neutral-100 dark:bg-neutral-800 rounded-full h-2 overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-blue-500 to-emerald-500"
+              style={{ width: `${currentWeekStats.rate}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Day-by-Day Quick Tracker Pills */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2 pt-1">
+          {weekDayBreakdown.map(wb => (
+            <button
+              key={wb.day}
+              type="button"
+              onClick={() => setSelectedDay(wb.day)}
+              className={`p-2.5 rounded-2xl border text-left transition-all cursor-pointer ${
+                wb.isToday
+                  ? 'bg-blue-500/[0.08] dark:bg-blue-500/[0.15] border-blue-500/40 shadow-2xs ring-1 ring-blue-500/30'
+                  : selectedDay === wb.day
+                  ? 'bg-neutral-100 dark:bg-neutral-800 border-black/15 dark:border-white/15'
+                  : 'bg-neutral-50/60 dark:bg-neutral-900/40 border-black/5 dark:border-white/5 hover:border-black/15'
+              }`}
+            >
+              <div className="flex items-center justify-between text-xs mb-1">
+                <span className={`font-bold ${wb.isToday ? 'text-blue-600 dark:text-blue-400' : 'text-neutral-900 dark:text-white'}`}>
+                  {wb.name.substring(0, 3)}
+                </span>
+                {wb.isToday && (
+                  <span className="text-[8px] font-black uppercase px-1 py-0.2 rounded bg-blue-600 text-white">
+                    Bugün
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center justify-between text-[11px] font-mono">
+                <span className="text-neutral-500">
+                  {wb.totalCount > 0 ? `${wb.totalCount} Oturum` : 'Boş'}
+                </span>
+                {wb.totalCount > 0 && (
+                  <span className={`font-bold text-[10px] px-1.5 py-0.2 rounded ${
+                    wb.isAllDone
+                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-extrabold'
+                      : wb.isPartial
+                      ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                      : 'bg-neutral-200/60 dark:bg-neutral-800 text-neutral-400'
+                  }`}>
+                    {wb.completedCount}/{wb.totalCount} {wb.isAllDone ? '✓' : ''}
+                  </span>
+                )}
+              </div>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -674,19 +963,68 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
               </thead>
               <tbody className="divide-y divide-black/5 dark:divide-white/5">
                 {[1, 2, 3, 4, 5, 6, 7].map(day => {
+                  const isToday = day === todayDayOfWeek;
                   const dayName = DAY_NAMES[day];
                   const dayItems = currentWeekSchedules.filter(s => s.dayOfWeek === day);
                   dayItems.sort((a, b) => (a.sessionNumber || 0) - (b.sessionNumber || 0));
+                  const dayCompleted = dayItems.filter(s => s.status === 'completed').length;
 
                   return (
-                    <tr key={day} className="hover:bg-neutral-50/50 dark:hover:bg-neutral-800/30 transition-colors">
-                      {/* 1. Sütun: Gün Adı */}
-                      <td className="p-3 font-extrabold text-neutral-900 dark:text-white bg-neutral-50/70 dark:bg-neutral-900/40 text-center border-r border-black/5 dark:border-white/5 align-top">
-                        <div className="sticky left-0">
-                          <span className="block text-xs">{dayName}</span>
+                    <tr
+                      key={day}
+                      className={`transition-colors ${
+                        isToday
+                          ? 'bg-blue-500/[0.06] dark:bg-blue-500/[0.12] ring-1 ring-inset ring-blue-500/25'
+                          : 'hover:bg-neutral-50/50 dark:hover:bg-neutral-800/30'
+                      }`}
+                    >
+                      {/* 1. Sütun: Gün Adı & Bugün Rozeti */}
+                      <td
+                        className={`p-3 font-extrabold text-center border-r border-black/5 dark:border-white/5 align-top ${
+                          isToday
+                            ? 'bg-blue-500/15 dark:bg-blue-500/25 text-blue-700 dark:text-blue-300'
+                            : 'text-neutral-900 dark:text-white bg-neutral-50/70 dark:bg-neutral-900/40'
+                        }`}
+                      >
+                        <div className="sticky left-0 flex flex-col items-center">
+                          {isToday && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 mb-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-blue-600 text-white shadow-2xs animate-pulse">
+                              Bugün
+                            </span>
+                          )}
+                          <span className={`block text-xs ${isToday ? 'font-black text-blue-700 dark:text-blue-300' : ''}`}>
+                            {dayName}
+                          </span>
                           <span className="text-[10px] text-neutral-400 font-normal">
                             {dayItems.length} Oturum
                           </span>
+                          {dayItems.length > 0 && (
+                            <span
+                              className={`text-[9px] font-bold mt-1 px-1.5 py-0.5 rounded-md ${
+                                dayCompleted === dayItems.length
+                                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25'
+                                  : dayCompleted > 0
+                                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                                  : 'bg-neutral-200/60 dark:bg-neutral-800 text-neutral-500'
+                              }`}
+                            >
+                              {dayCompleted}/{dayItems.length} Yapıldı
+                            </span>
+                          )}
+                          {copiedSession && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handlePasteSession(day);
+                              }}
+                              className="mt-1.5 px-2 py-0.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[9px] font-black flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-2xs"
+                              title={`Kopyalanan "${copiedSession.subject}" oturumunu ${dayName} gününe yapıştır`}
+                            >
+                              <ClipboardPaste className="w-2.5 h-2.5" />
+                              <span>Yapıştır</span>
+                            </button>
+                          )}
                         </div>
                       </td>
 
@@ -696,6 +1034,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                         const item = dayItems.find(s => s.sessionNumber === sessionNum) || (!dayItems.some(s => s.sessionNumber) ? dayItems[sIdx] : undefined);
                         const subjectColor = item ? getSubjectColor(item.subject) : null;
                         const selectedBoxTheme = BOX_THEMES.find(b => b.id === boxTheme) || BOX_THEMES[0];
+                        const isCompleted = item?.status === 'completed';
+                        const isDimmed = item && (
+                          (completionFilter === 'completed' && !isCompleted) ||
+                          (completionFilter === 'pending' && isCompleted)
+                        );
 
                         return (
                           <td
@@ -705,28 +1048,63 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                             {item ? (
                               <div
                                 style={{
-                                  backgroundColor: `${selectedBoxTheme.accentColor}18`,
-                                  borderColor: `${selectedBoxTheme.accentColor}50`,
+                                  backgroundColor: isCompleted
+                                    ? '#10b98114'
+                                    : `${selectedBoxTheme.accentColor}18`,
+                                  borderColor: isCompleted
+                                    ? '#10b98150'
+                                    : `${selectedBoxTheme.accentColor}50`,
+                                  opacity: isDimmed ? 0.35 : 1,
                                 }}
-                                className="p-2.5 rounded-2xl border shadow-2xs space-y-1.5 transition-all group"
+                                className="p-2.5 rounded-2xl border shadow-2xs space-y-1.5 transition-all group hover:shadow-xs"
                               >
                                 <div className="flex items-start justify-between gap-1">
                                   <span
                                     style={{
-                                      backgroundColor: `${selectedBoxTheme.accentColor}25`,
-                                      borderColor: `${selectedBoxTheme.accentColor}40`,
-                                      color: subjectColor ? `#${subjectColor.text}` : selectedBoxTheme.accentColor,
+                                      backgroundColor: isCompleted ? '#10b98125' : `${selectedBoxTheme.accentColor}25`,
+                                      borderColor: isCompleted ? '#10b98140' : `${selectedBoxTheme.accentColor}40`,
+                                      color: isCompleted ? '#059669' : (subjectColor ? `#${subjectColor.text}` : selectedBoxTheme.accentColor),
                                     }}
                                     className="font-black text-[10px] leading-tight px-1.5 py-0.5 rounded-md border"
                                   >
                                     {item.subject}
                                   </span>
-                                  {item.status === 'completed' && (
-                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                                  )}
+
+                                  {/* Direct Completion Toggle Checkbox / Button */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleScheduleItemCompletion(item.id);
+                                    }}
+                                    className={`px-1.5 py-0.5 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                                      isCompleted
+                                        ? 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-2xs'
+                                        : 'bg-white hover:bg-emerald-50 dark:bg-neutral-800 dark:hover:bg-emerald-950/40 text-neutral-500 hover:text-emerald-600 border border-black/10 dark:border-white/10'
+                                    }`}
+                                    title={isCompleted ? 'Tamamlandı (Geri almak için tıklayın)' : 'Oturumu Tamamlandı Olarak İşaretle'}
+                                  >
+                                    {isCompleted ? (
+                                      <>
+                                        <CheckCircle2 className="w-3 h-3 text-white fill-current" />
+                                        <span>Yapıldı</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Circle className="w-3 h-3 text-neutral-400 group-hover:text-emerald-500" />
+                                        <span>Tamamla</span>
+                                      </>
+                                    )}
+                                  </button>
                                 </div>
 
-                                <div className="font-semibold text-neutral-900 dark:text-white text-[11px] leading-snug line-clamp-2">
+                                <div
+                                  className={`font-semibold text-[11px] leading-snug line-clamp-2 transition-all ${
+                                    isCompleted
+                                      ? 'line-through text-neutral-400 dark:text-neutral-500'
+                                      : 'text-neutral-900 dark:text-white'
+                                  }`}
+                                >
                                   {item.topic}
                                 </div>
 
@@ -748,22 +1126,38 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                                   </div>
                                 )}
 
-                                {/* Interactive Timer Button & Delete for teacher */}
-                                <div className="pt-1.5 border-t border-black/5 dark:border-white/5 flex items-center justify-between no-print">
-                                  <button
-                                    onClick={() => startTimer({
-                                      scheduleItemId: item.id,
-                                      subject: item.subject,
-                                      topic: item.topic,
-                                      mode: item.targetType === 'duration' ? 'pomodoro' : 'stopwatch',
-                                      initialMinutes: item.targetValue || 25,
-                                    })}
-                                    className="p-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
-                                    title="Sayacı Başlat"
-                                  >
-                                    <Play className="w-2.5 h-2.5 fill-current" />
-                                    <span>Sayaç</span>
-                                  </button>
+                                {/* Interactive Timer Button, Copy & Delete for teacher */}
+                                <div className="pt-1.5 border-t border-black/5 dark:border-white/5 flex items-center justify-between no-print gap-1">
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => startTimer({
+                                        scheduleItemId: item.id,
+                                        subject: item.subject,
+                                        topic: item.topic,
+                                        mode: item.targetType === 'duration' ? 'pomodoro' : 'stopwatch',
+                                        initialMinutes: item.targetValue || 25,
+                                      })}
+                                      className="p-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                      title="Sayacı Başlat"
+                                    >
+                                      <Play className="w-2.5 h-2.5 fill-current" />
+                                      <span>Sayaç</span>
+                                    </button>
+
+                                    {/* Copy Session Button */}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleCopySession(item);
+                                      }}
+                                      className="p-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                      title="Bu Oturumu Kopyala"
+                                    >
+                                      <Copy className="w-2.5 h-2.5" />
+                                      <span>Kopyala</span>
+                                    </button>
+                                  </div>
 
                                   <button
                                     onClick={() => deleteScheduleItem(item.id)}
@@ -775,26 +1169,50 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                                 </div>
                               </div>
                             ) : (
-                              /* Empty slot: Click to add lesson directly to this slot */
-                              <button
-                                onClick={() => handleOpenAddForSlot(day, sessionNum)}
-                                style={{
-                                  borderColor: `${selectedBoxTheme.accentColor}40`,
-                                }}
-                                className="w-full h-full min-h-[85px] rounded-2xl border border-dashed hover:scale-[1.01] transition-all p-2 group cursor-pointer no-print flex flex-col items-center justify-center gap-1"
-                                title={`${dayName} ${sessionNum}. Oturuma Ders Ekle`}
-                              >
-                                <Plus
-                                  className="w-4 h-4 opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-all"
-                                  style={{ color: selectedBoxTheme.accentColor }}
-                                />
-                                <span
-                                  className="text-[10px] font-bold opacity-80 group-hover:opacity-100"
-                                  style={{ color: selectedBoxTheme.accentColor }}
+                              /* Empty slot: Show Paste button if session copied, else + Oturum Ekle */
+                              copiedSession ? (
+                                <div
+                                  style={{ borderColor: `${selectedBoxTheme.accentColor}50` }}
+                                  className="w-full h-full min-h-[90px] rounded-2xl border-2 border-dashed bg-blue-500/[0.04] p-1.5 flex flex-col items-center justify-center gap-1.5 transition-all no-print"
                                 >
-                                  + Oturum Ekle
-                                </span>
-                              </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handlePasteSession(day, sessionNum)}
+                                    className="w-full py-1.5 px-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-[10px] flex items-center justify-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                                    title={`Kopyalanan "${copiedSession.subject}" oturumunu ${dayName} ${sessionNum}. Oturuma yapıştır`}
+                                  >
+                                    <ClipboardPaste className="w-3 h-3" />
+                                    <span>Yapıştır ({copiedSession.subject.slice(0, 7)})</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenAddForSlot(day, sessionNum)}
+                                    className="text-[9px] text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 font-semibold cursor-pointer"
+                                  >
+                                    + Boş Ekle
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => handleOpenAddForSlot(day, sessionNum)}
+                                  style={{
+                                    borderColor: `${selectedBoxTheme.accentColor}40`,
+                                  }}
+                                  className="w-full h-full min-h-[85px] rounded-2xl border border-dashed hover:scale-[1.01] transition-all p-2 group cursor-pointer no-print flex flex-col items-center justify-center gap-1"
+                                  title={`${dayName} ${sessionNum}. Oturuma Ders Ekle`}
+                                >
+                                  <Plus
+                                    className="w-4 h-4 opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-all"
+                                    style={{ color: selectedBoxTheme.accentColor }}
+                                  />
+                                  <span
+                                    className="text-[10px] font-bold opacity-80 group-hover:opacity-100"
+                                    style={{ color: selectedBoxTheme.accentColor }}
+                                  >
+                                    + Oturum Ekle
+                                  </span>
+                                </button>
+                              )
                             )}
                           </td>
                         );
@@ -845,96 +1263,187 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
 
             {/* Day Filter Pills */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-              {DAYS.map(day => (
-                <button
-                  key={day.id}
-                  onClick={() => setSelectedDay(day.id)}
-                  style={
-                    selectedDay === day.id
-                      ? {
-                          backgroundColor: selectedBoxTheme.accentColor,
-                          boxShadow: `0 2px 8px 0 ${selectedBoxTheme.accentColor}30`,
-                          color: '#FFFFFF',
-                        }
-                      : undefined
-                  }
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
-                    selectedDay === day.id
-                      ? 'shadow-xs'
-                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 border border-black/5 dark:border-white/5 hover:bg-neutral-200'
-                  }`}
-                >
-                  {day.label}
-                </button>
-              ))}
+              {DAYS.map(day => {
+                const isTodayDay = day.id === todayDayOfWeek;
+                return (
+                  <button
+                    key={day.id}
+                    onClick={() => setSelectedDay(day.id)}
+                    style={
+                      selectedDay === day.id
+                        ? {
+                            backgroundColor: selectedBoxTheme.accentColor,
+                            boxShadow: `0 2px 8px 0 ${selectedBoxTheme.accentColor}30`,
+                            color: '#FFFFFF',
+                          }
+                        : undefined
+                    }
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                      selectedDay === day.id
+                        ? 'shadow-xs'
+                        : isTodayDay
+                        ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30'
+                        : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 border border-black/5 dark:border-white/5 hover:bg-neutral-200'
+                    }`}
+                  >
+                    <span>{day.label}</span>
+                    {isTodayDay && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping" />
+                    )}
+                  </button>
+                );
+              })}
             </div>
+
+            {/* Paste Button for Cards View */}
+            {copiedSession && (
+              <button
+                type="button"
+                onClick={() => handlePasteSession(selectedDay === 0 ? todayDayOfWeek : selectedDay)}
+                className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer active:scale-95 transition-all shrink-0"
+                title={`Kopyalanan oturumu ${selectedDay === 0 ? DAY_NAMES[todayDayOfWeek] : DAY_NAMES[selectedDay]} gününe yapıştır`}
+              >
+                <ClipboardPaste className="w-3.5 h-3.5" />
+                <span>{selectedDay === 0 ? `${todayName}'ne` : `${DAY_NAMES[selectedDay]}'ne`} Yapıştır</span>
+              </button>
+            )}
           </div>
 
           {/* Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {displaySchedules.map(item => (
-              <div
-                key={item.id}
-                style={{
-                  borderColor: `${selectedBoxTheme.accentColor}35`,
-                  backgroundColor: `${selectedBoxTheme.accentColor}0A`,
-                }}
-                className="p-4 rounded-3xl bg-white dark:bg-[#1C1C1E] border shadow-xs space-y-2 transition-all"
-              >
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-extrabold text-blue-600 dark:text-blue-400">
-                    {DAY_NAMES[item.dayOfWeek]} {item.sessionNumber ? `• ${item.sessionNumber}. Oturum` : ''}
-                  </span>
-                  {item.status === 'completed' && (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600">
-                      Tamamlandı
-                    </span>
-                  )}
+          {(() => {
+            const cardItems = displaySchedules.filter(item => {
+              if (completionFilter === 'completed') return item.status === 'completed';
+              if (completionFilter === 'pending') return item.status !== 'completed';
+              return true;
+            });
+
+            if (cardItems.length === 0) {
+              return (
+                <div className="p-8 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 text-center text-neutral-500">
+                  <p className="font-bold text-sm">Seçili kriterlere uygun oturum bulunamadı.</p>
+                  <p className="text-xs text-neutral-400 mt-1">Oturum eklemek için yukarıdaki "Oturum Ekle" butonunu kullanabilirsiniz.</p>
                 </div>
+              );
+            }
 
-                <h3 className="font-bold text-sm text-neutral-900 dark:text-white">
-                  {item.subject} • {item.topic}
-                </h3>
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {cardItems.map(item => {
+                  const isCompleted = item.status === 'completed';
+                  const isTodayItem = item.dayOfWeek === todayDayOfWeek;
 
-                {item.timeRange && (
-                  <div className="text-xs text-neutral-500 flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5" />
-                    <span>{item.timeRange}</span>
-                  </div>
-                )}
+                  return (
+                    <div
+                      key={item.id}
+                      style={{
+                        borderColor: isCompleted ? '#10b98150' : `${selectedBoxTheme.accentColor}35`,
+                        backgroundColor: isCompleted ? '#10b9810d' : `${selectedBoxTheme.accentColor}0A`,
+                      }}
+                      className="p-4 rounded-3xl bg-white dark:bg-[#1C1C1E] border shadow-xs space-y-2 transition-all group hover:shadow-sm"
+                    >
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-extrabold text-blue-600 dark:text-blue-400">
+                            {DAY_NAMES[item.dayOfWeek]} {item.sessionNumber ? `• ${item.sessionNumber}. Oturum` : ''}
+                          </span>
+                          {isTodayItem && (
+                            <span className="text-[9px] font-black px-1.5 py-0.2 rounded-full bg-blue-600 text-white animate-pulse">
+                              Bugün
+                            </span>
+                          )}
+                        </div>
 
-                {item.targetValue && (
-                  <div className="text-xs text-neutral-500 flex items-center gap-1">
-                    <Target className="w-3.5 h-3.5 text-rose-500" />
-                    <span>{item.targetValue} {item.targetType === 'duration' ? 'Dakika' : 'Soru'}</span>
-                  </div>
-                )}
+                        {/* Status badge */}
+                        {isCompleted ? (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                            <span>Tamamlandı</span>
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-500">
+                            Bekliyor
+                          </span>
+                        )}
+                      </div>
 
-                <div className="pt-2 border-t border-black/5 dark:border-white/5 flex items-center justify-between">
-                  <button
-                    onClick={() => startTimer({
-                      scheduleItemId: item.id,
-                      subject: item.subject,
-                      topic: item.topic,
-                      mode: item.targetType === 'duration' ? 'pomodoro' : 'stopwatch',
-                      initialMinutes: item.targetValue || 25,
-                    })}
-                    className="px-3 py-1.5 rounded-xl bg-emerald-500 text-white font-bold text-xs flex items-center gap-1 shadow-xs cursor-pointer"
-                  >
-                    <Play className="w-3 h-3 fill-current" />
-                    <span>Sayacı Başlat</span>
-                  </button>
+                      <h3 className={`font-bold text-sm transition-all ${
+                        isCompleted ? 'line-through text-neutral-400 dark:text-neutral-500' : 'text-neutral-900 dark:text-white'
+                      }`}>
+                        {item.subject} • {item.topic}
+                      </h3>
 
-                  <button
-                    onClick={() => deleteScheduleItem(item.id)}
-                    className="text-neutral-400 hover:text-rose-500 p-1"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
+                      {item.timeRange && (
+                        <div className="text-xs text-neutral-500 flex items-center gap-1 font-mono">
+                          <Clock className="w-3.5 h-3.5 text-neutral-400" />
+                          <span>{item.timeRange}</span>
+                        </div>
+                      )}
+
+                      {item.targetValue && (
+                        <div className="text-xs text-neutral-500 flex items-center gap-1 font-mono">
+                          <Target className="w-3.5 h-3.5 text-rose-500" />
+                          <span>{item.targetValue} {item.targetType === 'duration' ? 'Dakika' : 'Soru'}</span>
+                        </div>
+                      )}
+
+                      <div className="pt-2 border-t border-black/5 dark:border-white/5 flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => startTimer({
+                              scheduleItemId: item.id,
+                              subject: item.subject,
+                              topic: item.topic,
+                              mode: item.targetType === 'duration' ? 'pomodoro' : 'stopwatch',
+                              initialMinutes: item.targetValue || 25,
+                            })}
+                            className="px-2.5 py-1.5 rounded-xl bg-emerald-500 text-white font-bold text-xs flex items-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                            title="Sayacı Başlat"
+                          >
+                            <Play className="w-3 h-3 fill-current" />
+                            <span>Sayacı Başlat</span>
+                          </button>
+
+                          {/* Quick Toggle Completion Checkbox */}
+                          <button
+                            type="button"
+                            onClick={() => toggleScheduleItemCompletion(item.id)}
+                            className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                              isCompleted
+                                ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                                : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:bg-emerald-50 hover:text-emerald-600 border border-black/5 dark:border-white/5'
+                            }`}
+                            title={isCompleted ? 'Tamamlandı (Geri almak için tıklayın)' : 'Oturumu Tamamlandı Olarak İşaretle'}
+                          >
+                            <CheckCircle2 className={`w-3.5 h-3.5 ${isCompleted ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-400'}`} />
+                            <span>{isCompleted ? 'Yapıldı' : 'Tamamla'}</span>
+                          </button>
+
+                          {/* Copy Session Button */}
+                          <button
+                            type="button"
+                            onClick={() => handleCopySession(item)}
+                            className="px-2.5 py-1.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 text-xs font-bold flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                            title="Bu Oturumu Kopyala"
+                          >
+                            <Copy className="w-3 h-3" />
+                            <span>Kopyala</span>
+                          </button>
+                        </div>
+
+                        <button
+                          onClick={() => deleteScheduleItem(item.id)}
+                          className="text-neutral-400 hover:text-rose-500 p-1.5 transition-colors cursor-pointer"
+                          title="Oturumu Sil"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-          </div>
+            );
+          })()}
         </div>
       )}
 
