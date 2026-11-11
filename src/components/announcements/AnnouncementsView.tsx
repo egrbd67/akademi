@@ -8,9 +8,13 @@ import {
   CheckCircle2,
   Eye,
   Users,
-  X
+  X,
+  MessageSquare,
+  CornerDownRight,
+  Send
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { AnnouncementComment } from '../../types';
 import { getThemeStyles } from '../theme/ThemeCustomizerModal';
 
 export const AnnouncementsView: React.FC = () => {
@@ -20,7 +24,10 @@ export const AnnouncementsView: React.FC = () => {
     addAnnouncement,
     deleteAnnouncement,
     toggleAnnouncementRead,
+    addAnnouncementComment,
+    deleteAnnouncementComment,
     students,
+    currentStudent,
     currentStudentId,
     currentTeacher,
     firebaseUser,
@@ -29,6 +36,9 @@ export const AnnouncementsView: React.FC = () => {
   const themeStyles = getThemeStyles(boxTheme);
 
   const activeTeacherName = currentTeacher?.name || firebaseUser?.displayName || 'Öğretmen';
+  const currentAuthorId = role === 'teacher'
+    ? (currentTeacher?.id || firebaseUser?.uid || 'teacher')
+    : (currentStudent?.id || currentStudentId || 'student');
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [title, setTitle] = useState('');
@@ -37,6 +47,12 @@ export const AnnouncementsView: React.FC = () => {
   const [isUrgent, setIsUrgent] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [viewingReadListAnnId, setViewingReadListAnnId] = useState<string | null>(null);
+
+  // Comment & Reply state per announcement
+  const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
+  const [replyTargets, setReplyTargets] = useState<
+    Record<string, { parentId: string; authorName: string } | null>
+  >({});
 
   React.useEffect(() => {
     if (activeTeacherName) {
@@ -54,13 +70,45 @@ export const AnnouncementsView: React.FC = () => {
       date: new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' }),
       authorName: authorNameInput.trim() || activeTeacherName,
       urgent: isUrgent,
-      readBy: []
+      readBy: [],
+      comments: []
     });
 
     setIsAddModalOpen(false);
     setTitle('');
     setContent('');
     setIsUrgent(false);
+  };
+
+  const handleCommentSubmit = async (e: React.FormEvent, announcementId: string) => {
+    e.preventDefault();
+    const text = (commentInputs[announcementId] || '').trim();
+    if (!text) return;
+
+    const replyInfo = replyTargets[announcementId];
+    await addAnnouncementComment(
+      announcementId,
+      text,
+      replyInfo?.parentId,
+      replyInfo?.authorName
+    );
+
+    setCommentInputs(prev => ({ ...prev, [announcementId]: '' }));
+    setReplyTargets(prev => ({ ...prev, [announcementId]: null }));
+  };
+
+  const formatCommentTime = (iso: string) => {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString('tr-TR', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return '';
+    }
   };
 
   const activeViewingAnnouncement = announcements.find(a => a.id === viewingReadListAnnId);
@@ -86,7 +134,7 @@ export const AnnouncementsView: React.FC = () => {
       </div>
 
       {/* Liste */}
-      <div className="space-y-3.5">
+      <div className="space-y-4">
         {announcements.length === 0 ? (
           <div className="p-10 text-center rounded-2xl bg-white dark:bg-[#1C1C1E] border border-dashed border-black/10 dark:border-white/10 space-y-1.5">
             <Megaphone className="w-8 h-8 text-neutral-400 mx-auto" />
@@ -97,11 +145,15 @@ export const AnnouncementsView: React.FC = () => {
             const readStudentIds = ann.readBy || [];
             const readCount = readStudentIds.length;
             const isReadByMe = currentStudentId ? readStudentIds.includes(currentStudentId) : false;
+            const allComments: AnnouncementComment[] = ann.comments || [];
+            const rootComments = allComments.filter(c => !c.parentId);
+            const getReplies = (parentId: string) => allComments.filter(c => c.parentId === parentId);
+            const activeReply = replyTargets[ann.id] || null;
 
             return (
               <div
                 key={ann.id}
-                className={`p-5 rounded-2xl bg-white dark:bg-[#1C1C1E] border space-y-2.5 ${
+                className={`p-5 rounded-2xl bg-white dark:bg-[#1C1C1E] border space-y-3 ${
                   ann.urgent
                     ? 'border-amber-500/30'
                     : 'border-black/5 dark:border-white/5'
@@ -175,7 +227,13 @@ export const AnnouncementsView: React.FC = () => {
                 </p>
 
                 <div className="pt-2.5 border-t border-black/5 dark:border-white/5 flex items-center justify-between gap-3 text-[11px] text-neutral-400">
-                  <span>{ann.authorName}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="font-semibold text-neutral-600 dark:text-neutral-300">{ann.authorName}</span>
+                    <span className="inline-flex items-center gap-1 text-neutral-500 dark:text-neutral-400 font-semibold">
+                      <MessageSquare className="w-3.5 h-3.5 text-blue-500" />
+                      <span>{allComments.length} Yorum</span>
+                    </span>
+                  </div>
 
                   {role === 'student' && currentStudentId && (
                     <button
@@ -190,6 +248,197 @@ export const AnnouncementsView: React.FC = () => {
                       <span>{isReadByMe ? 'Okundu' : 'Okundu İşaretle'}</span>
                     </button>
                   )}
+                </div>
+
+                {/* Yorumlar ve Yanıtlar Bölümü */}
+                <div className="pt-3 border-t border-black/5 dark:border-white/5 space-y-3">
+                  {rootComments.length > 0 && (
+                    <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+                      {rootComments.map(cmt => {
+                        const replies = getReplies(cmt.id);
+                        const canDelete = role === 'teacher' || cmt.authorId === currentAuthorId;
+
+                        return (
+                          <div key={cmt.id} className="space-y-1.5">
+                            {/* Ana Yorum */}
+                            <div className="p-3 rounded-xl bg-neutral-50 dark:bg-neutral-900/60 border border-black/5 dark:border-white/5 text-xs space-y-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="w-5 h-5 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400 font-bold text-[10px] flex items-center justify-center">
+                                    {(cmt.authorName || 'K')[0].toUpperCase()}
+                                  </span>
+                                  <span className="font-bold text-neutral-900 dark:text-white">
+                                    {cmt.authorName}
+                                  </span>
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                      cmt.authorRole === 'teacher'
+                                        ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
+                                        : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                                    }`}
+                                  >
+                                    {cmt.authorRole === 'teacher' ? 'Öğretmen' : 'Öğrenci'}
+                                  </span>
+                                  <span className="text-[10px] text-neutral-400">
+                                    {formatCommentTime(cmt.createdAt)}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setReplyTargets(prev => ({
+                                        ...prev,
+                                        [ann.id]: { parentId: cmt.id, authorName: cmt.authorName }
+                                      }))
+                                    }
+                                    className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 cursor-pointer"
+                                  >
+                                    <CornerDownRight className="w-3 h-3" />
+                                    <span>Yanıtla</span>
+                                  </button>
+
+                                  {canDelete && (
+                                    <button
+                                      type="button"
+                                      onClick={() => deleteAnnouncementComment(ann.id, cmt.id)}
+                                      className="p-1 rounded text-neutral-400 hover:text-rose-500 transition-colors cursor-pointer"
+                                      title="Yorumu Sil"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              <p className="text-neutral-700 dark:text-neutral-300 leading-relaxed pl-6 break-words">
+                                {cmt.content}
+                              </p>
+                            </div>
+
+                            {/* Alt Yanıtlar */}
+                            {replies.length > 0 && (
+                              <div className="pl-5 sm:pl-7 space-y-1.5">
+                                {replies.map(rep => {
+                                  const canDeleteReply = role === 'teacher' || rep.authorId === currentAuthorId;
+                                  return (
+                                    <div
+                                      key={rep.id}
+                                      className="p-2.5 rounded-xl bg-neutral-100/80 dark:bg-neutral-800/50 border border-black/5 dark:border-white/5 text-xs space-y-1"
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <CornerDownRight className="w-3 h-3 text-neutral-400 shrink-0" />
+                                          <span className="font-bold text-neutral-900 dark:text-white">
+                                            {rep.authorName}
+                                          </span>
+                                          <span
+                                            className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                              rep.authorRole === 'teacher'
+                                                ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
+                                                : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                                            }`}
+                                          >
+                                            {rep.authorRole === 'teacher' ? 'Öğretmen' : 'Öğrenci'}
+                                          </span>
+                                          {rep.replyToName && (
+                                            <span className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold">
+                                              @{rep.replyToName}
+                                            </span>
+                                          )}
+                                          <span className="text-[10px] text-neutral-400">
+                                            {formatCommentTime(rep.createdAt)}
+                                          </span>
+                                        </div>
+
+                                        <div className="flex items-center gap-2 shrink-0">
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setReplyTargets(prev => ({
+                                                ...prev,
+                                                [ann.id]: { parentId: cmt.id, authorName: rep.authorName }
+                                              }))
+                                            }
+                                            className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                                          >
+                                            Yanıtla
+                                          </button>
+                                          {canDeleteReply && (
+                                            <button
+                                              type="button"
+                                              onClick={() => deleteAnnouncementComment(ann.id, rep.id)}
+                                              className="p-1 rounded text-neutral-400 hover:text-rose-500 transition-colors cursor-pointer"
+                                              title="Yanıtı Sil"
+                                            >
+                                              <Trash2 className="w-3 h-3" />
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      <p className="text-neutral-700 dark:text-neutral-300 leading-relaxed pl-4 break-words">
+                                        {rep.content}
+                                      </p>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Yorum / Yanıt Yazma Alanı */}
+                  <form onSubmit={e => handleCommentSubmit(e, ann.id)} className="space-y-1.5">
+                    {activeReply && (
+                      <div className="flex items-center justify-between px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-600 dark:text-blue-400 font-semibold">
+                        <span className="flex items-center gap-1">
+                          <CornerDownRight className="w-3 h-3" />
+                          <span>@{activeReply.authorName} yorumuna yanıt yazılıyor</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setReplyTargets(prev => ({ ...prev, [ann.id]: null }))}
+                          className="p-0.5 hover:bg-blue-500/20 rounded cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={commentInputs[ann.id] || ''}
+                        onChange={e =>
+                          setCommentInputs(prev => ({ ...prev, [ann.id]: e.target.value }))
+                        }
+                        placeholder={
+                          activeReply
+                            ? `@${activeReply.authorName} için yanıtınızı yazın...`
+                            : 'Duyuruya yorum veya soru yazın...'
+                        }
+                        className="flex-1 px-3 py-2 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 text-xs text-neutral-900 dark:text-white focus:outline-none focus:border-blue-500/50"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!(commentInputs[ann.id] || '').trim()}
+                        style={(commentInputs[ann.id] || '').trim() ? themeStyles.primaryBtn : undefined}
+                        className={`px-3.5 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+                          (commentInputs[ann.id] || '').trim()
+                            ? 'text-white shadow-xs'
+                            : 'bg-neutral-200 dark:bg-neutral-800 text-neutral-400 cursor-not-allowed'
+                        }`}
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>{activeReply ? 'Yanıtla' : 'Yorum Yap'}</span>
+                      </button>
+                    </div>
+                  </form>
                 </div>
               </div>
             );

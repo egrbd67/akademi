@@ -12,6 +12,7 @@ import {
   TrialExam,
   Homework,
   Announcement,
+  AnnouncementComment,
   NotificationItem,
   ActiveTimerSession,
   SolvedQuestions,
@@ -54,6 +55,8 @@ interface QuestionEntryState {
   scheduleItemId?: string;
   homeworkId?: string;
   durationMinutes: number;
+  durationSeconds?: number;
+  mode?: 'stopwatch' | 'pomodoro';
   subject: string;
   topic: string;
 }
@@ -140,6 +143,8 @@ interface AppContextType {
   addAnnouncement: (ann: Omit<Announcement, 'id'>) => Promise<string>;
   deleteAnnouncement: (id: string) => Promise<void>;
   toggleAnnouncementRead: (announcementId: string, studentId: string) => Promise<void>;
+  addAnnouncementComment: (announcementId: string, content: string, parentId?: string, replyToName?: string) => Promise<void>;
+  deleteAnnouncementComment: (announcementId: string, commentId: string) => Promise<void>;
   notifications: NotificationItem[];
   markNotificationAsRead: (id: string) => void;
   clearAllNotifications: () => void;
@@ -160,12 +165,17 @@ interface AppContextType {
     topic: string;
     mode?: 'stopwatch' | 'pomodoro';
     initialMinutes?: number;
+    openModal?: boolean;
+    autoStart?: boolean;
   }) => void;
   pauseTimer: () => void;
   resumeTimer: () => void;
   resetTimer: () => void;
   minimizeTimer: () => void;
   expandTimer: () => void;
+  hideTimerPopup: () => void;
+  showTimerPopup: () => void;
+  updateTimerState: (updates: Partial<ActiveTimerSession>) => void;
   finishTimer: () => void;
   cancelTimer: () => void;
   isTimerModalOpen: boolean;
@@ -174,7 +184,7 @@ interface AppContextType {
   // Question Entry Sheet
   questionEntryModal: QuestionEntryState | null;
   closeQuestionEntryModal: () => void;
-  submitQuestionEntry: (results: SolvedQuestions, customSubject?: string, customTopic?: string) => void;
+  submitQuestionEntry: (results: SolvedQuestions, customSubject?: string, customTopic?: string, studentNote?: string) => void;
 
   // Streaks & Recovery
   incrementStreakForStudent: (studentId: string) => void;
@@ -200,6 +210,55 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 const STORAGE_PREFIX = 'akademi_takip_firebase_v1_';
+
+let lastFinishChimeTimestamp = 0;
+
+export const playFocusFinishSound = () => {
+  const now = Date.now();
+  if (now - lastFinishChimeTimestamp < 800) return;
+  lastFinishChimeTimestamp = now;
+
+  try {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
+    const notes = [
+      { freq: 659.25, start: 0, duration: 0.22, gain: 0.14 },     // E5
+      { freq: 987.77, start: 0.12, duration: 0.26, gain: 0.16 },  // B5
+      { freq: 1318.51, start: 0.25, duration: 0.48, gain: 0.18 }, // E6
+    ];
+
+    const startTime = ctx.currentTime + 0.02;
+
+    notes.forEach(({ freq, start, duration, gain }) => {
+      const osc = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, startTime + start);
+
+      gainNode.gain.setValueAtTime(0.0001, startTime + start);
+      gainNode.gain.linearRampToValueAtTime(gain, startTime + start + 0.02);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, startTime + start + duration);
+
+      osc.connect(gainNode);
+      gainNode.connect(ctx.destination);
+
+      osc.start(startTime + start);
+      osc.stop(startTime + start + duration + 0.02);
+    });
+
+    setTimeout(() => {
+      ctx.close().catch(() => {});
+    }, 1000);
+  } catch {
+    // Ignore audio errors if blocked by browser autoplay policy
+  }
+};
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Theme state: Dark mode, Background color customization, Box/Card color customization
@@ -292,6 +351,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(`${STORAGE_PREFIX}dark_mode`, isDarkMode ? 'true' : 'false');
   }, [isDarkMode]);
 
+  // Global background timer interval (continues counting across all tabs and even when popup is hidden)
+  useEffect(() => {
+    if (!activeTimer?.isRunning) return;
+    const interval = setInterval(() => {
+      setActiveTimer(prev => {
+        if (!prev || !prev.isRunning) return prev;
+        const nextElapsed = prev.elapsedSeconds + 1;
+        if (prev.mode === 'pomodoro' && nextElapsed >= (prev.initialDurationMinutes || 25) * 60) {
+          playFocusFinishSound();
+          return {
+            ...prev,
+            elapsedSeconds: (prev.initialDurationMinutes || 25) * 60,
+            isRunning: false
+          };
+        }
+        return {
+          ...prev,
+          elapsedSeconds: nextElapsed
+        };
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [activeTimer?.isRunning]);
+
 
 
   // Subscribe to all Firestore collections in real time
@@ -358,7 +441,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Listen to Firebase Auth state
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-      setFirebaseUser(user);
       if (user) {
         let savedTch: Teacher | null = null;
         let savedStd: Student | null = null;
@@ -370,15 +452,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         } catch {}
 
         if (savedStd) {
+          setFirebaseUser(null);
           setIsAuthReady(true);
           return;
         }
         if (savedTch && savedTch.authProvider === 'password' && savedTch.id !== user.uid) {
+          setFirebaseUser(null);
           setCurrentTeacher(savedTch);
           setIsAuthReady(true);
           return;
         }
 
+        setFirebaseUser(user);
         const teacherName = user.displayName || user.email?.split('@')[0] || 'Öğretmen';
         const defaultUsername = (user.email?.split('@')[0] || user.uid.slice(0, 6)).toLowerCase();
         const teacherProfile: Teacher = {
@@ -398,6 +483,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         localStorage.removeItem(`${STORAGE_PREFIX}student_session`);
         localStorage.setItem(`${STORAGE_PREFIX}teacher_session`, JSON.stringify(teacherProfile));
         saveTeacherToFirestore(teacherProfile);
+      } else {
+        setFirebaseUser(null);
       }
       setIsAuthReady(true);
     });
@@ -438,9 +525,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Active Teacher ID for strict multi-tenant data isolation
   const activeTeacherId = useMemo(() => {
     if (role === 'teacher') {
-      return currentTeacher?.id || firebaseUser?.uid || '';
+      if (currentTeacher?.id) return currentTeacher.id;
+      return firebaseUser?.uid || '';
     }
-    return currentStudent?.teacherUid || currentTeacher?.id || firebaseUser?.uid || '';
+    if (currentStudent?.teacherUid) return currentStudent.teacherUid;
+    if (currentTeacher?.id) return currentTeacher.id;
+    return '';
   }, [role, currentTeacher, firebaseUser, currentStudent]);
 
   // Cloud Sync for Theme Preferences (cross-device & session persistence)
@@ -530,7 +620,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     currentStudent?.themeConfig?.isDarkMode
   ]);
 
-  // Strictly isolated collections per teacher account
+  // Strictly isolated collections per account
   const teachers = useMemo(() => {
     if (!currentTeacher) return [];
     const live = rawTeachers.find(t => t.id === currentTeacher.id);
@@ -559,23 +649,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const homeworks = useMemo(() => {
     if (!activeTeacherId) return [];
-    return rawHomeworks.filter(hw => hw.teacherUid === activeTeacherId || studentIdsSet.has(hw.studentId));
+    return rawHomeworks.filter(hw => studentIdsSet.has(hw.studentId) && (!hw.teacherUid || hw.teacherUid === activeTeacherId));
   }, [rawHomeworks, activeTeacherId, studentIdsSet]);
 
   const trialExams = useMemo(() => {
     if (!activeTeacherId) return [];
-    return rawTrialExams.filter(ex => ex.teacherUid === activeTeacherId || studentIdsSet.has(ex.studentId));
+    return rawTrialExams.filter(ex => studentIdsSet.has(ex.studentId) && (!ex.teacherUid || ex.teacherUid === activeTeacherId));
   }, [rawTrialExams, activeTeacherId, studentIdsSet]);
 
   const focusSessions = useMemo(() => {
+    if (role === 'student') {
+      if (!currentStudent?.id) return [];
+      return rawFocusSessions.filter(f => f.studentId === currentStudent.id);
+    }
     if (!activeTeacherId) return [];
-    return rawFocusSessions.filter(f => f.teacherUid === activeTeacherId || studentIdsSet.has(f.studentId));
-  }, [rawFocusSessions, activeTeacherId, studentIdsSet]);
+    return rawFocusSessions.filter(
+      f => studentIdsSet.has(f.studentId) && (!f.teacherUid || f.teacherUid === activeTeacherId)
+    );
+  }, [rawFocusSessions, role, currentStudent?.id, activeTeacherId, studentIdsSet]);
 
   const activities = useMemo(() => {
+    if (role === 'student') {
+      if (!currentStudent?.id) return [];
+      return rawActivities.filter(a => a.studentId === currentStudent.id);
+    }
     if (!activeTeacherId) return [];
-    return rawActivities.filter(a => a.teacherUid === activeTeacherId || studentIdsSet.has(a.studentId));
-  }, [rawActivities, activeTeacherId, studentIdsSet]);
+    return rawActivities.filter(
+      a => studentIdsSet.has(a.studentId) && (!a.teacherUid || a.teacherUid === activeTeacherId)
+    );
+  }, [rawActivities, role, currentStudent?.id, activeTeacherId, studentIdsSet]);
 
   const announcements = useMemo(() => {
     if (!activeTeacherId) return [];
@@ -1186,6 +1288,65 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await updateAnnouncementInFirestore(announcementId, { readBy: updatedReads });
   }, [announcements]);
 
+  const addAnnouncementComment = useCallback(async (
+    announcementId: string,
+    content: string,
+    parentId?: string,
+    replyToName?: string
+  ) => {
+    const cleanText = content.trim();
+    if (!cleanText) return;
+    const targetAnn = announcements.find(a => a.id === announcementId);
+    if (!targetAnn) return;
+
+    const authorId = role === 'teacher'
+      ? (currentTeacher?.id || firebaseUser?.uid || 'teacher')
+      : (currentStudent?.id || 'student');
+    const authorName = role === 'teacher'
+      ? (currentTeacher?.name || firebaseUser?.displayName || 'Öğretmen')
+      : (currentStudent?.name || 'Öğrenci');
+
+    const newComment: AnnouncementComment = {
+      id: `cmt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      authorId,
+      authorName,
+      authorRole: role,
+      content: cleanText,
+      createdAt: new Date().toISOString(),
+      ...(parentId ? { parentId } : {}),
+      ...(replyToName ? { replyToName } : {})
+    };
+
+    const updatedComments = [...(targetAnn.comments || []), newComment];
+    setRawAnnouncements(prev =>
+      prev.map(a => a.id === announcementId ? { ...a, comments: updatedComments } : a)
+    );
+    await updateAnnouncementInFirestore(announcementId, { comments: updatedComments });
+
+    if (role === 'student' && currentStudent) {
+      await logActivity({
+        studentId: currentStudent.id,
+        studentName: currentStudent.name,
+        teacherUid: targetAnn.teacherUid || activeTeacherId,
+        type: 'focus_completed',
+        title: `Duyuru Yorumu • ${targetAnn.title}`,
+        detail: `${currentStudent.name}: "${cleanText}"`
+      });
+    }
+  }, [announcements, role, currentTeacher, firebaseUser, currentStudent, activeTeacherId, logActivity]);
+
+  const deleteAnnouncementComment = useCallback(async (announcementId: string, commentId: string) => {
+    const targetAnn = announcements.find(a => a.id === announcementId);
+    if (!targetAnn) return;
+    const updatedComments = (targetAnn.comments || []).filter(
+      c => c.id !== commentId && c.parentId !== commentId
+    );
+    setRawAnnouncements(prev =>
+      prev.map(a => a.id === announcementId ? { ...a, comments: updatedComments } : a)
+    );
+    await updateAnnouncementInFirestore(announcementId, { comments: updatedComments });
+  }, [announcements]);
+
   // Assigned Exams
   const addAssignedExam = useCallback(async (exam: Omit<AssignedExam, 'id'>) => {
     const id = `exam_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -1243,6 +1404,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     topic: string;
     mode?: 'stopwatch' | 'pomodoro';
     initialMinutes?: number;
+    openModal?: boolean;
+    autoStart?: boolean;
   }) => {
     setActiveTimer({
       scheduleItemId: params.scheduleItemId,
@@ -1253,11 +1416,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       mode: params.mode || 'stopwatch',
       initialDurationMinutes: params.initialMinutes || 25,
       elapsedSeconds: 0,
-      isRunning: true,
-      isMinimized: false,
+      isRunning: params.autoStart !== false,
+      isMinimized: !params.openModal,
+      isPopupHidden: false,
       startedAt: new Date().toISOString()
     });
-    setIsTimerModalOpen(true);
+    setIsTimerModalOpen(Boolean(params.openModal));
   }, [currentStudent]);
 
   const pauseTimer = useCallback(() => {
@@ -1269,21 +1433,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const resetTimer = useCallback(() => {
-    setActiveTimer(prev => prev ? { ...prev, elapsedSeconds: 0 } : null);
+    setActiveTimer(prev => prev ? { ...prev, elapsedSeconds: 0, isRunning: false } : null);
   }, []);
 
   const minimizeTimer = useCallback(() => {
-    setActiveTimer(prev => prev ? { ...prev, isMinimized: true } : null);
+    setActiveTimer(prev => prev ? { ...prev, isMinimized: true, isPopupHidden: false } : null);
     setIsTimerModalOpen(false);
   }, []);
 
   const expandTimer = useCallback(() => {
-    setActiveTimer(prev => prev ? { ...prev, isMinimized: false } : null);
+    setActiveTimer(prev => prev ? { ...prev, isMinimized: false, isPopupHidden: false } : null);
     setIsTimerModalOpen(true);
+  }, []);
+
+  const hideTimerPopup = useCallback(() => {
+    setActiveTimer(prev => prev ? { ...prev, isPopupHidden: true, isMinimized: true } : null);
+    setIsTimerModalOpen(false);
+  }, []);
+
+  const showTimerPopup = useCallback(() => {
+    setActiveTimer(prev => prev ? { ...prev, isPopupHidden: false } : null);
+  }, []);
+
+  const updateTimerState = useCallback((updates: Partial<ActiveTimerSession>) => {
+    setActiveTimer(prev => prev ? { ...prev, ...updates } : null);
   }, []);
 
   const finishTimer = useCallback(() => {
     if (!activeTimer) return;
+    playFocusFinishSound();
     const durationMinutes = Math.max(1, Math.round(activeTimer.elapsedSeconds / 60));
 
     // Open question entry sheet
@@ -1292,6 +1470,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       scheduleItemId: activeTimer.scheduleItemId,
       homeworkId: activeTimer.homeworkId,
       durationMinutes,
+      durationSeconds: activeTimer.elapsedSeconds,
+      mode: activeTimer.mode,
       subject: activeTimer.subject,
       topic: activeTimer.topic
     });
@@ -1310,8 +1490,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   // Submit Question Entry
-  const submitQuestionEntry = useCallback(async (results: SolvedQuestions, customSubject?: string, customTopic?: string) => {
-    if (!questionEntryModal || !currentStudent) return;
+  const submitQuestionEntry = useCallback(async (
+    results: SolvedQuestions,
+    customSubject?: string,
+    customTopic?: string,
+    studentNote?: string
+  ) => {
+    const targetSt = currentStudent || students[0];
+    if (!questionEntryModal || !targetSt) return;
 
     const finalSubject = customSubject?.trim() || questionEntryModal.subject;
     const finalTopic = customTopic?.trim() || questionEntryModal.topic;
@@ -1340,15 +1526,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Save as focus session in Firestore (automatically handles >= 5 min streak +1 & activity log)
     await addFocusSession({
-      studentId: currentStudent.id,
-      studentName: currentStudent.name,
-      teacherUid: currentStudent.teacherUid,
+      studentId: targetSt.id,
+      studentName: targetSt.name,
+      teacherUid: targetSt.teacherUid,
       subject: finalSubject,
       topic: finalTopic,
       durationMinutes: questionEntryModal.durationMinutes,
-      durationSeconds: questionEntryModal.durationMinutes * 60,
-      mode: 'stopwatch',
+      durationSeconds: questionEntryModal.durationSeconds ?? questionEntryModal.durationMinutes * 60,
+      mode: questionEntryModal.mode || 'stopwatch',
       solvedQuestions: results,
+      studentNote: studentNote?.trim() || undefined,
       sentToTeacher: true
     });
 
@@ -1362,7 +1549,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {}
 
     setQuestionEntryModal(null);
-  }, [questionEntryModal, currentStudent, updateScheduleItem, updateHomework, addFocusSession]);
+  }, [questionEntryModal, currentStudent, students, updateScheduleItem, updateHomework, addFocusSession]);
 
   // Streak operations
   const incrementStreakForStudent = useCallback(async (studentId: string) => {
@@ -1582,6 +1769,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addAnnouncement,
         deleteAnnouncement,
         toggleAnnouncementRead,
+        addAnnouncementComment,
+        deleteAnnouncementComment,
         assignedExams,
         upcomingExam,
         addAssignedExam,
@@ -1597,6 +1786,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         resetTimer,
         minimizeTimer,
         expandTimer,
+        hideTimerPopup,
+        showTimerPopup,
+        updateTimerState,
         finishTimer,
         cancelTimer,
         isTimerModalOpen,

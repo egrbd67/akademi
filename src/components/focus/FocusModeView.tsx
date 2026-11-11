@@ -5,14 +5,16 @@ import {
   RotateCcw,
   CheckCircle2,
   Send,
-  BookOpen,
   Clock,
   MessageSquare,
   Zap,
   Sliders,
-  Check
+  Check,
+  Eye,
+  EyeOff,
+  Maximize2
 } from 'lucide-react';
-import { useApp } from '../../context/AppContext';
+import { useApp, playFocusFinishSound } from '../../context/AppContext';
 import { SolvedQuestions } from '../../types';
 import { getThemeStyles } from '../theme/ThemeCustomizerModal';
 
@@ -24,20 +26,27 @@ export const FocusModeView: React.FC = () => {
     focusSessions,
     addFocusSession,
     giveTeacherFeedbackToFocusSession,
-    boxTheme
+    boxTheme,
+    activeTimer,
+    startTimer,
+    pauseTimer,
+    resumeTimer,
+    cancelTimer,
+    expandTimer,
+    hideTimerPopup,
+    showTimerPopup,
+    updateTimerState
   } = useApp();
 
   const themeStyles = getThemeStyles(boxTheme);
 
-  const [mode, setMode] = useState<'pomodoro' | 'stopwatch'>('pomodoro');
-  const [targetMinutes, setTargetMinutes] = useState<number>(25);
+  const [mode, setMode] = useState<'pomodoro' | 'stopwatch'>(activeTimer?.mode || 'pomodoro');
+  const [targetMinutes, setTargetMinutes] = useState<number>(activeTimer?.initialDurationMinutes || 25);
   const [customTargetInput, setCustomTargetInput] = useState<string>('');
   const [isEditingCustomMin, setIsEditingCustomMin] = useState<boolean>(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
-  const [isRunning, setIsRunning] = useState<boolean>(false);
 
-  const [selectedSubject, setSelectedSubject] = useState<string>('Matematik');
-  const [selectedTopic, setSelectedTopic] = useState<string>('Konu Çalışması');
+  const [selectedSubject, setSelectedSubject] = useState<string>(activeTimer?.subject || 'Matematik');
+  const [selectedTopic, setSelectedTopic] = useState<string>(activeTimer?.topic || 'Konu Çalışması');
 
   const [isReportModalOpen, setIsReportModalOpen] = useState<boolean>(false);
   const [studentNote, setStudentNote] = useState<string>('');
@@ -49,26 +58,25 @@ export const FocusModeView: React.FC = () => {
   const [feedbackText, setFeedbackText] = useState<string>('');
   const [filterStudentId, setFilterStudentId] = useState<string>('ALL');
 
+  // Keep local form fields synced when an activeTimer is already running from Schedule/Homework or FocusMode
+  useEffect(() => {
+    if (activeTimer) {
+      setMode(activeTimer.mode);
+      if (activeTimer.initialDurationMinutes) {
+        setTargetMinutes(activeTimer.initialDurationMinutes);
+      }
+      if (activeTimer.subject) setSelectedSubject(activeTimer.subject);
+      if (activeTimer.topic) setSelectedTopic(activeTimer.topic);
+    }
+  }, [activeTimer?.mode, activeTimer?.initialDurationMinutes, activeTimer?.subject, activeTimer?.topic]);
+
+  const elapsedSeconds = activeTimer ? activeTimer.elapsedSeconds : 0;
+  const isRunning = Boolean(activeTimer?.isRunning);
+
   const todayStr = new Date().toISOString().split('T')[0];
   const isStreakEarnedToday = Boolean(
     currentStudent?.streak?.lastActiveDate === todayStr && (currentStudent?.streak?.count || 0) > 0
   );
-
-  useEffect(() => {
-    let interval: any = null;
-    if (isRunning) {
-      interval = setInterval(() => {
-        setElapsedSeconds(prev => {
-          if (mode === 'pomodoro' && prev + 1 >= targetMinutes * 60) {
-            setIsRunning(false);
-            return targetMinutes * 60;
-          }
-          return prev + 1;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [isRunning, mode, targetMinutes]);
 
   const totalTargetSec = targetMinutes * 60;
   const displaySeconds = mode === 'pomodoro'
@@ -87,15 +95,61 @@ export const FocusModeView: React.FC = () => {
     ? Math.min(100, (elapsedSeconds / totalTargetSec) * 100)
     : Math.min(100, ((elapsedSeconds % 3600) / 3600) * 100);
 
-  const handleStart = () => setIsRunning(true);
-  const handlePause = () => setIsRunning(false);
+  const handleStart = () => {
+    if (activeTimer) {
+      updateTimerState({
+        subject: selectedSubject.trim() || 'Matematik',
+        topic: selectedTopic.trim() || 'Konu Çalışması',
+        mode,
+        initialDurationMinutes: targetMinutes,
+        isPopupHidden: false
+      });
+      resumeTimer();
+    } else {
+      startTimer({
+        subject: selectedSubject.trim() || 'Matematik',
+        topic: selectedTopic.trim() || 'Konu Çalışması',
+        mode,
+        initialMinutes: targetMinutes,
+        openModal: false
+      });
+    }
+  };
+
+  const handlePause = () => {
+    pauseTimer();
+  };
+
   const handleReset = () => {
-    setIsRunning(false);
-    setElapsedSeconds(0);
+    cancelTimer();
+  };
+
+  const handleOpenFullscreen = () => {
+    if (activeTimer) {
+      updateTimerState({
+        subject: selectedSubject.trim() || 'Matematik',
+        topic: selectedTopic.trim() || 'Konu Çalışması',
+        mode,
+        initialDurationMinutes: targetMinutes
+      });
+      expandTimer();
+    } else {
+      startTimer({
+        subject: selectedSubject.trim() || 'Matematik',
+        topic: selectedTopic.trim() || 'Konu Çalışması',
+        mode,
+        initialMinutes: targetMinutes,
+        openModal: true,
+        autoStart: false
+      });
+    }
   };
 
   const handleFinishAndOpenReport = () => {
-    setIsRunning(false);
+    playFocusFinishSound();
+    if (activeTimer?.isRunning) {
+      pauseTimer();
+    }
     setIsReportModalOpen(true);
   };
 
@@ -130,7 +184,7 @@ export const FocusModeView: React.FC = () => {
     });
 
     setIsReportModalOpen(false);
-    setElapsedSeconds(0);
+    cancelTimer();
     setStudentNote('');
     setSolvedCorrect(0);
     setSolvedWrong(0);
@@ -146,40 +200,71 @@ export const FocusModeView: React.FC = () => {
 
   const filteredFocusSessions = useMemo(() => {
     if (role === 'student') {
-      return focusSessions.filter(s => s.studentId === currentStudent?.id);
+      if (!currentStudent?.id) return [];
+      return focusSessions.filter(s => s.studentId === currentStudent.id);
     }
-    if (filterStudentId === 'ALL') return focusSessions;
-    return focusSessions.filter(s => s.studentId === filterStudentId);
-  }, [focusSessions, filterStudentId, role, currentStudent?.id]);
+    const ownStudentIds = new Set(students.map(s => s.id));
+    const teacherSessions = focusSessions.filter(s => ownStudentIds.has(s.studentId));
+    if (filterStudentId === 'ALL') return teacherSessions;
+    return teacherSessions.filter(s => s.studentId === filterStudentId);
+  }, [focusSessions, filterStudentId, role, currentStudent?.id, students]);
 
   const sessionStats = useMemo(() => {
-    const list = role === 'student'
-      ? focusSessions.filter(s => s.studentId === currentStudent?.id)
-      : (filterStudentId === 'ALL' ? focusSessions : focusSessions.filter(s => s.studentId === filterStudentId));
-
-    const totalMinutes = list.reduce((acc, curr) => acc + curr.durationMinutes, 0);
-    const todayReports = list.filter(s => s.completedAt.startsWith(todayStr)).length;
+    const totalMinutes = filteredFocusSessions.reduce((acc, curr) => acc + curr.durationMinutes, 0);
+    const todayReports = filteredFocusSessions.filter(s => s.completedAt.startsWith(todayStr)).length;
     return {
       totalHours: (totalMinutes / 60).toFixed(1),
-      totalReports: list.length,
+      totalReports: filteredFocusSessions.length,
       todayReports
     };
-  }, [focusSessions, role, currentStudent?.id, filterStudentId, todayStr]);
+  }, [filteredFocusSessions, todayStr]);
 
   return (
     <div className="space-y-5 max-w-5xl mx-auto select-none">
       {/* Üst Başlık */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-black/5 dark:border-white/5">
-        <h1 className="text-lg sm:text-xl font-bold text-neutral-900 dark:text-white">
-          Odak Modu
-        </h1>
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <h1 className="text-lg sm:text-xl font-bold text-neutral-900 dark:text-white">
+            Odak Modu
+          </h1>
+          {activeTimer && (
+            <button
+              onClick={() => activeTimer.isPopupHidden ? showTimerPopup() : hideTimerPopup()}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25 hover:bg-emerald-500/25 transition-colors cursor-pointer"
+              title="Küçük Odak Pop-up'ını Göster veya Gizle (Arka planda saymaya devam eder)"
+            >
+              {activeTimer.isPopupHidden ? (
+                <>
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Küçük Pop-up'ı Göster (Arka Planda Sayıyor)</span>
+                </>
+              ) : (
+                <>
+                  <EyeOff className="w-3.5 h-3.5" />
+                  <span>Pop-up Ekranda Aktif (Gizle)</span>
+                </>
+              )}
+            </button>
+          )}
+        </div>
 
-        <div
-          style={{ backgroundColor: `${themeStyles.accentColor}15`, color: themeStyles.accentColor }}
-          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold self-start sm:self-auto"
-        >
-          <Zap className="w-3.5 h-3.5" />
-          <span>{isStreakEarnedToday ? 'Bugünkü Seri Kazanıldı' : '5 Dk Odak = +1 Seri'}</span>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <div
+            style={{ backgroundColor: `${themeStyles.accentColor}15`, color: themeStyles.accentColor }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            <span>{isStreakEarnedToday ? 'Bugünkü Seri Kazanıldı' : '5 Dk Odak = +1 Seri'}</span>
+          </div>
+
+          <button
+            onClick={handleOpenFullscreen}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 hover:opacity-90 transition-opacity cursor-pointer whitespace-nowrap"
+            title="Tam Ekran Odak Moduna Geç"
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+            <span>Tam Ekran</span>
+          </button>
         </div>
       </div>
 
@@ -192,7 +277,12 @@ export const FocusModeView: React.FC = () => {
         {/* Mod Seçimi */}
         <div className="flex items-center justify-center gap-1.5 max-w-xs mx-auto mb-5 p-1 rounded-xl bg-neutral-100 dark:bg-neutral-800">
           <button
-            onClick={() => !isRunning && setMode('pomodoro')}
+            onClick={() => {
+              if (!isRunning) {
+                setMode('pomodoro');
+                if (activeTimer) updateTimerState({ mode: 'pomodoro', elapsedSeconds: 0 });
+              }
+            }}
             disabled={isRunning}
             className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
               mode === 'pomodoro'
@@ -203,7 +293,12 @@ export const FocusModeView: React.FC = () => {
             Geri Sayım
           </button>
           <button
-            onClick={() => !isRunning && setMode('stopwatch')}
+            onClick={() => {
+              if (!isRunning) {
+                setMode('stopwatch');
+                if (activeTimer) updateTimerState({ mode: 'stopwatch', elapsedSeconds: 0 });
+              }
+            }}
             disabled={isRunning}
             className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
               mode === 'stopwatch'
@@ -224,7 +319,9 @@ export const FocusModeView: React.FC = () => {
                   key={mins}
                   onClick={() => {
                     setTargetMinutes(mins);
-                    setElapsedSeconds(0);
+                    if (activeTimer) {
+                      updateTimerState({ initialDurationMinutes: mins, elapsedSeconds: 0 });
+                    }
                     setIsEditingCustomMin(false);
                   }}
                   style={
@@ -266,7 +363,9 @@ export const FocusModeView: React.FC = () => {
                   const val = parseInt(customTargetInput, 10);
                   if (!isNaN(val) && val >= 1 && val <= 1440) {
                     setTargetMinutes(val);
-                    setElapsedSeconds(0);
+                    if (activeTimer) {
+                      updateTimerState({ initialDurationMinutes: val, elapsedSeconds: 0 });
+                    }
                     setIsEditingCustomMin(false);
                   }
                 }}
@@ -342,10 +441,10 @@ export const FocusModeView: React.FC = () => {
           </svg>
 
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className="font-mono text-4xl sm:text-5xl font-extrabold tracking-tight">
+            <span className="focus-clock-font tabular-nums text-4xl sm:text-5xl font-bold tracking-tight">
               {formattedTime}
             </span>
-            <span className="text-[11px] font-semibold mt-1.5 text-neutral-400">
+            <span className="text-[11px] font-semibold mt-2 text-neutral-400">
               {elapsedSeconds >= 300
                 ? (isStreakEarnedToday ? '5+ Dk Tamamlandı' : '5+ Dk (+1 Seri Hazır)')
                 : isRunning ? 'Çalışılıyor' : 'Hazır'}
@@ -384,10 +483,18 @@ export const FocusModeView: React.FC = () => {
 
           <button
             onClick={handleFinishAndOpenReport}
-            className="px-5 py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+            className="px-5 py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
           >
             <Send className="w-3.5 h-3.5" />
             <span>Bitir & Gönder</span>
+          </button>
+
+          <button
+            onClick={handleOpenFullscreen}
+            className="p-3 rounded-xl bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-600 dark:text-neutral-300 cursor-pointer"
+            title="Tam Ekran Yap"
+          >
+            <Maximize2 className="w-4 h-4" />
           </button>
         </div>
       </div>

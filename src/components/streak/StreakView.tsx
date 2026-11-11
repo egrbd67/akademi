@@ -60,16 +60,17 @@ export const StreakView: React.FC = () => {
   };
 
   const dailyActivities = useMemo(() => {
-    const list = [...activities];
-
+    if (role === 'student') {
+      if (!currentStudent?.id) return [];
+      return activities.filter(a => a.studentId === currentStudent.id);
+    }
+    const ownStudentIds = new Set(students.map(s => s.id));
+    const teacherActivities = activities.filter(a => ownStudentIds.has(a.studentId));
     if (activityStudentFilter !== 'all') {
-      return list.filter(a => a.studentId === activityStudentFilter);
+      return teacherActivities.filter(a => a.studentId === activityStudentFilter);
     }
-    if (role === 'student' && currentStudent) {
-      return list.filter(a => a.studentId === currentStudent.id);
-    }
-    return list;
-  }, [activities, activityStudentFilter, role, currentStudent]);
+    return teacherActivities;
+  }, [activities, activityStudentFilter, role, currentStudent?.id, students]);
 
   const teacherStats = useMemo(() => {
     const total = students.length;

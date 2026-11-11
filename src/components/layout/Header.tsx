@@ -60,7 +60,9 @@ export const Header: React.FC<HeaderProps> = ({
     assignedExams,
     upcomingExam,
     addAssignedExam,
-    deleteAssignedExam
+    deleteAssignedExam,
+    activeTimer,
+    showTimerPopup
   } = useApp();
 
   const themeStyles = getThemeStyles(boxTheme);
@@ -251,8 +253,40 @@ export const Header: React.FC<HeaderProps> = ({
           ) : null}
         </div>
 
-        {/* Right: Streak Badge, Simulation (Teacher), Notifications, Theme, Logout */}
+        {/* Right: Background Timer Indicator, Streak Badge, Notifications, Theme, Logout */}
         <div className="flex items-center gap-1.5 sm:gap-2.5">
+          {/* Background Focus Timer Badge (Visible when timer is active, restores floating popup on click) */}
+          {activeTimer && (
+            <button
+              onClick={showTimerPopup}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 transition-all text-xs font-bold active:scale-95 cursor-pointer shadow-xs"
+              title="Odak Sayacı Arka Planda Çalışıyor • Pop-up'ı Göster"
+            >
+              <span className="relative flex h-2 w-2">
+                {activeTimer.isRunning && (
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                )}
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${activeTimer.isRunning ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+              </span>
+              <Clock className="w-3.5 h-3.5 shrink-0" />
+              <span className="font-mono">
+                {(() => {
+                  const isPom = activeTimer.mode === 'pomodoro';
+                  const targetSec = (activeTimer.initialDurationMinutes || 25) * 60;
+                  const sec = isPom ? Math.max(0, targetSec - activeTimer.elapsedSeconds) : activeTimer.elapsedSeconds;
+                  const m = Math.floor(sec / 60).toString().padStart(2, '0');
+                  const s = (sec % 60).toString().padStart(2, '0');
+                  return `${m}:${s}`;
+                })()}
+              </span>
+              {activeTimer.isPopupHidden && (
+                <span className="hidden md:inline text-[10px] bg-emerald-500 text-white px-1.5 py-0.5 rounded-full">
+                  Pop-up Aç
+                </span>
+              )}
+            </button>
+          )}
+
           {/* Streak Badge (Only visible for students) */}
           {renderStreakBadge()}
 

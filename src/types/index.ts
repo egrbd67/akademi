@@ -208,6 +208,17 @@ export interface Homework {
   teacherFeedback?: string;
 }
 
+export interface AnnouncementComment {
+  id: string;
+  authorId: string;
+  authorName: string;
+  authorRole: Role;
+  content: string;
+  createdAt: string;
+  parentId?: string; // Yanıtlanan yorumun ID'si
+  replyToName?: string; // Yanıtlanan kişinin adı
+}
+
 export interface Announcement {
   id: string;
   teacherUid?: string;
@@ -217,6 +228,7 @@ export interface Announcement {
   authorName: string;
   urgent?: boolean;
   readBy?: string[]; // Okundu işaretleyen öğrencilerin ID'leri
+  comments?: AnnouncementComment[];
 }
 
 export interface AssignedExam {
@@ -252,5 +264,6 @@ export interface ActiveTimerSession {
   elapsedSeconds: number;
   isRunning: boolean;
   isMinimized: boolean;
+  isPopupHidden?: boolean;
   startedAt?: string;
 }
