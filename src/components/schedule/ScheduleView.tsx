@@ -395,36 +395,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
         </div>
 
         {/* Action Buttons: Add Lesson, View Switch, Excel, Print */}
-        {/* Action Buttons: Add Lesson, View Switch, Excel, Print */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* 2 Haftalık Döngü Seçici */}
-          <div className="flex p-1 rounded-2xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5">
-            <button
-              onClick={() => setSelectedWeek(1)}
-              style={selectedWeek === 1 ? { backgroundColor: selectedBoxTheme.accentColor, color: '#FFFFFF' } : undefined}
-              className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
-                selectedWeek === 1
-                  ? 'shadow-xs'
-                  : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
-              }`}
-              title="1. Hafta Programı"
-            >
-              1. Hafta
-            </button>
-            <button
-              onClick={() => setSelectedWeek(2)}
-              style={selectedWeek === 2 ? { backgroundColor: selectedBoxTheme.accentColor, color: '#FFFFFF' } : undefined}
-              className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
-                selectedWeek === 2
-                  ? 'shadow-xs'
-                  : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
-              }`}
-              title="2. Hafta Programı"
-            >
-              2. Hafta
-            </button>
-          </div>
-
           {/* Prominent Add Lesson Button for Active Student */}
           <button
             onClick={() => {
@@ -573,10 +544,6 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
         </div>
       </div>
 
-      {/* Leaderboard Card (Günlük ve Haftalık En Çok Soru Çözenler) */}
-      <div className="no-print">
-        <LeaderboardCard />
-      </div>
       <div className="print-only hidden p-4 mb-4 border-b-2 border-neutral-900">
         <div className="flex items-center justify-between pb-2 border-b border-neutral-300">
           <div>
@@ -604,12 +571,46 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
       {/* VIEW 1: DİKEY A4 OTURUM MATRİSİ (1. SÜTUN GÜNLER, ÜST SATIR 1 2 3... OTURUMLAR) */}
       {viewMode === 'matrix' ? (
         <div className="rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 shadow-xs overflow-hidden">
-          <div className="p-4 bg-neutral-50 dark:bg-neutral-900/60 border-b border-black/5 dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 no-print">
-            <div className="flex items-center gap-2">
-              <Grid3X3 className="w-4 h-4 text-blue-500" />
-              <span className="font-extrabold text-xs text-neutral-900 dark:text-white">
-                {selectedWeek}. Hafta Oturum Tablosu ({visibleSessionsCount} Oturum)
-              </span>
+          <div className="p-3.5 sm:p-4 bg-neutral-50 dark:bg-neutral-900/60 border-b border-black/5 dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 no-print">
+            <div className="flex items-center gap-3 flex-wrap">
+              {/* 1. Hafta / 2. Hafta Butonları - Soru Çözme Programı ile Bitişik ve Üstte Net Görünür */}
+              <div className="flex p-1 rounded-2xl bg-neutral-200/80 dark:bg-neutral-800 border border-black/10 dark:border-white/10 shadow-xs">
+                <button
+                  type="button"
+                  onClick={() => setSelectedWeek(1)}
+                  style={selectedWeek === 1 ? { backgroundColor: selectedBoxTheme.accentColor, color: '#FFFFFF' } : undefined}
+                  className={`px-3.5 py-1.5 rounded-xl font-extrabold text-xs sm:text-sm transition-all cursor-pointer flex items-center gap-1.5 ${
+                    selectedWeek === 1
+                      ? 'shadow-xs scale-[1.02]'
+                      : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+                  }`}
+                  title="1. Hafta Oturum Programını Görüntüle"
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>1. Hafta</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedWeek(2)}
+                  style={selectedWeek === 2 ? { backgroundColor: selectedBoxTheme.accentColor, color: '#FFFFFF' } : undefined}
+                  className={`px-3.5 py-1.5 rounded-xl font-extrabold text-xs sm:text-sm transition-all cursor-pointer flex items-center gap-1.5 ${
+                    selectedWeek === 2
+                      ? 'shadow-xs scale-[1.02]'
+                      : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+                  }`}
+                  title="2. Hafta Oturum Programını Görüntüle"
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>2. Hafta</span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Grid3X3 className="w-4 h-4 text-blue-500" />
+                <span className="font-extrabold text-xs sm:text-sm text-neutral-900 dark:text-white">
+                  {selectedWeek}. Hafta Oturum Tablosu ({visibleSessionsCount} Oturum)
+                </span>
+              </div>
             </div>
 
             {/* Oturum Sayısını Dinamik Artırma / Azaltma Butonları */}
@@ -808,30 +809,65 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
       ) : (
         /* VIEW 2: GÜNLÜK DETAYLI KARTLAR GÖRÜNÜMÜ */
         <div className="space-y-4">
-          {/* Day Filter Pills */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none no-print">
-            {DAYS.map(day => (
+          {/* Week & Day Filter Controls */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-2xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 no-print">
+            {/* 1. Hafta / 2. Hafta Butonları */}
+            <div className="flex p-1 rounded-2xl bg-neutral-200/80 dark:bg-neutral-800 border border-black/10 dark:border-white/10 shrink-0">
               <button
-                key={day.id}
-                onClick={() => setSelectedDay(day.id)}
-                style={
-                  selectedDay === day.id
-                    ? {
-                        backgroundColor: selectedBoxTheme.accentColor,
-                        boxShadow: `0 2px 8px 0 ${selectedBoxTheme.accentColor}30`,
-                        color: '#FFFFFF',
-                      }
-                    : undefined
-                }
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
-                  selectedDay === day.id
-                    ? 'shadow-xs'
-                    : 'bg-white dark:bg-[#1C1C1E] text-neutral-600 dark:text-neutral-400 border border-black/5 dark:border-white/5 hover:bg-neutral-100'
+                type="button"
+                onClick={() => setSelectedWeek(1)}
+                style={selectedWeek === 1 ? { backgroundColor: selectedBoxTheme.accentColor, color: '#FFFFFF' } : undefined}
+                className={`px-3.5 py-1.5 rounded-xl font-extrabold text-xs sm:text-sm transition-all cursor-pointer flex items-center gap-1.5 ${
+                  selectedWeek === 1
+                    ? 'shadow-xs scale-[1.02]'
+                    : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
                 }`}
+                title="1. Hafta Programı"
               >
-                {day.label}
+                <Calendar className="w-3.5 h-3.5" />
+                <span>1. Hafta</span>
               </button>
-            ))}
+              <button
+                type="button"
+                onClick={() => setSelectedWeek(2)}
+                style={selectedWeek === 2 ? { backgroundColor: selectedBoxTheme.accentColor, color: '#FFFFFF' } : undefined}
+                className={`px-3.5 py-1.5 rounded-xl font-extrabold text-xs sm:text-sm transition-all cursor-pointer flex items-center gap-1.5 ${
+                  selectedWeek === 2
+                    ? 'shadow-xs scale-[1.02]'
+                    : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+                }`}
+                title="2. Hafta Programı"
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                <span>2. Hafta</span>
+              </button>
+            </div>
+
+            {/* Day Filter Pills */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+              {DAYS.map(day => (
+                <button
+                  key={day.id}
+                  onClick={() => setSelectedDay(day.id)}
+                  style={
+                    selectedDay === day.id
+                      ? {
+                          backgroundColor: selectedBoxTheme.accentColor,
+                          boxShadow: `0 2px 8px 0 ${selectedBoxTheme.accentColor}30`,
+                          color: '#FFFFFF',
+                        }
+                      : undefined
+                  }
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                    selectedDay === day.id
+                      ? 'shadow-xs'
+                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 border border-black/5 dark:border-white/5 hover:bg-neutral-200'
+                  }`}
+                >
+                  {day.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Cards Grid */}
@@ -901,6 +937,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
           </div>
         </div>
       )}
+
+      {/* Soru Çözme Liderlik Tablosu (Sayfanın altında, ders programının arkasında) */}
+      <div className="no-print pt-2">
+        <LeaderboardCard />
+      </div>
 
       {/* Dikey A4 Çıktı Alt Bilgisi (Yalnızca Yazdırmada Görünür) */}
       <div className="print-only hidden pt-8 mt-6 border-t border-black text-xs">
