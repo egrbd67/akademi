@@ -6,18 +6,25 @@ import {
   Sparkles,
   Plus,
   Minus,
-  BookOpen,
   Clock,
-  Send,
   Target
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { normalizeSubjectName } from '../../constants/subjects';
 
 export const QuestionEntrySheet: React.FC = () => {
-  const { questionEntryModal, closeQuestionEntryModal, submitQuestionEntry } = useApp();
+  const {
+    questionEntryModal,
+    closeQuestionEntryModal,
+    submitQuestionEntry,
+    subjects,
+    addSubjectVariable
+  } = useApp();
 
-  const [subject, setSubject] = useState<string>('');
+  const [subject, setSubject] = useState<string>('Matematik');
   const [topic, setTopic] = useState<string>('');
+  const [isAddingSubject, setIsAddingSubject] = useState<boolean>(false);
+  const [newSubjectName, setNewSubjectName] = useState<string>('');
   const [durationMinutes, setDurationMinutes] = useState<number>(25);
   const [studentNote, setStudentNote] = useState<string>('');
   const [correct, setCorrect] = useState<number>(30);
@@ -26,10 +33,12 @@ export const QuestionEntrySheet: React.FC = () => {
 
   React.useEffect(() => {
     if (questionEntryModal) {
-      setSubject(questionEntryModal.subject || 'Matematik');
+      setSubject(normalizeSubjectName(questionEntryModal.subject || 'Matematik'));
       setTopic(questionEntryModal.topic || 'Konu Çalışması');
       setDurationMinutes(Math.max(1, questionEntryModal.durationMinutes || 25));
       setStudentNote('');
+      setIsAddingSubject(false);
+      setNewSubjectName('');
     }
   }, [questionEntryModal]);
 
@@ -45,8 +54,20 @@ export const QuestionEntrySheet: React.FC = () => {
 
   const nowTime = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
 
+  const handleAddCustomSubject = () => {
+    const clean = newSubjectName.trim();
+    if (!clean) return;
+    const norm = normalizeSubjectName(clean);
+    addSubjectVariable(norm);
+    setSubject(norm);
+    setNewSubjectName('');
+    setIsAddingSubject(false);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const canonicalSubject = normalizeSubjectName(subject);
+    addSubjectVariable(canonicalSubject);
     submitQuestionEntry(
       {
         correct,
@@ -54,7 +75,7 @@ export const QuestionEntrySheet: React.FC = () => {
         blank,
         net,
       },
-      subject,
+      canonicalSubject,
       topic,
       studentNote,
       Math.max(1, Number(durationMinutes) || 1)
@@ -93,20 +114,30 @@ export const QuestionEntrySheet: React.FC = () => {
 
         {/* Question Counters & Subject/Topic Inputs */}
         <form onSubmit={handleSubmit} className="space-y-3.5">
-          {/* Ders ve Konu Alanları */}
+          {/* Ortak Ders Değişkeni ve Konu Alanları */}
           <div className="grid grid-cols-2 gap-2.5">
             <div>
               <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1">
-                Ders
+                Ders Değişkeni
               </label>
-              <input
-                type="text"
+              <select
                 value={subject}
-                onChange={e => setSubject(e.target.value)}
-                placeholder="Ders"
-                className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 text-xs font-bold text-neutral-900 dark:text-white"
-                required
-              />
+                onChange={e => {
+                  if (e.target.value === '__ADD_NEW__') {
+                    setIsAddingSubject(true);
+                  } else {
+                    setSubject(e.target.value);
+                  }
+                }}
+                className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 text-xs font-bold text-neutral-900 dark:text-white focus:outline-none"
+              >
+                {subjects.map(subj => (
+                  <option key={subj} value={subj}>
+                    {subj}
+                  </option>
+                ))}
+                <option value="__ADD_NEW__">+ Yeni Ders Değişkeni...</option>
+              </select>
             </div>
             <div>
               <label className="block text-xs font-bold text-neutral-700 dark:text-neutral-300 mb-1">
@@ -122,6 +153,36 @@ export const QuestionEntrySheet: React.FC = () => {
               />
             </div>
           </div>
+
+          {isAddingSubject && (
+            <div className="flex items-center gap-2 p-2.5 rounded-xl bg-blue-500/5 border border-blue-500/20">
+              <input
+                type="text"
+                value={newSubjectName}
+                onChange={e => setNewSubjectName(e.target.value)}
+                placeholder="Yeni ders adı girin..."
+                className="flex-1 p-2 rounded-lg bg-white dark:bg-neutral-900 border border-black/10 dark:border-white/10 text-xs font-bold text-neutral-900 dark:text-white"
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={handleAddCustomSubject}
+                className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold cursor-pointer"
+              >
+                Ekle
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddingSubject(false);
+                  setNewSubjectName('');
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-neutral-200 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 text-xs font-bold cursor-pointer"
+              >
+                İptal
+              </button>
+            </div>
+          )}
 
           {/* Çalışma Süresi (Dakika) Giriş Alanı */}
           <div className="p-3 rounded-2xl bg-blue-500/5 border border-blue-500/20 flex items-center justify-between gap-3">
@@ -282,7 +343,7 @@ export const QuestionEntrySheet: React.FC = () => {
               </div>
               <div className="text-[11px] text-blue-600 dark:text-blue-400 flex items-center gap-1 mt-0.5 font-semibold">
                 <Sparkles className="w-3 h-3" />
-                <span>Sıralama puanına ve günlük seriye işlenecek!</span>
+                <span>Aynı ders değişkeni altında ortak analize işlenecek!</span>
               </div>
             </div>
 

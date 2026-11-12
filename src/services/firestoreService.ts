@@ -258,6 +258,15 @@ export async function saveTrialExamToFirestore(exam: TrialExam) {
   }
 }
 
+export async function updateTrialExamInFirestore(id: string, updates: Partial<TrialExam>) {
+  const path = `trialExams/${id}`;
+  try {
+    await updateDoc(doc(db, 'trialExams', id), cleanForFirestore(updates));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
 export async function deleteTrialExamFromFirestore(id: string) {
   const path = `trialExams/${id}`;
   try {
@@ -274,6 +283,24 @@ export async function saveFocusSessionToFirestore(session: FocusSession) {
     await setDoc(doc(db, 'focusSessions', session.id), cleanForFirestore(session));
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+export async function updateFocusSessionInFirestore(id: string, updates: Partial<FocusSession>) {
+  const path = `focusSessions/${id}`;
+  try {
+    await updateDoc(doc(db, 'focusSessions', id), cleanForFirestore(updates));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function deleteFocusSessionFromFirestore(id: string) {
+  const path = `focusSessions/${id}`;
+  try {
+    await deleteDoc(doc(db, 'focusSessions', id));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
   }
 }
 

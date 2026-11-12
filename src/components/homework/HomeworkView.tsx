@@ -15,11 +15,14 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Homework, HomeworkStatus } from '../../types';
+import { normalizeSubjectName } from '../../constants/subjects';
 
 export const HomeworkView: React.FC = () => {
   const {
     role,
     currentStudent,
+    subjects,
+    addSubjectVariable,
     homeworks,
     addHomework,
     updateHomework,
@@ -94,11 +97,14 @@ export const HomeworkView: React.FC = () => {
     e.preventDefault();
     if (!newTitle.trim() || !newTopic.trim()) return;
 
+    const canonicalSubject = normalizeSubjectName(newSubject);
+    addSubjectVariable(canonicalSubject);
+
     addHomework({
       studentId: currentStudent.id,
       title: newTitle.trim(),
       description: newDesc.trim() || 'Verilen sorular eksiksiz çözülecek ve yanlışlar kontrol edilecek.',
-      subject: newSubject,
+      subject: canonicalSubject,
       topic: newTopic.trim(),
       sourceBook: newSourceBook.trim() || 'Kaynak Kitap',
       targetQuestionCount: Number(newTargetQuestions),
@@ -375,15 +381,19 @@ export const HomeworkView: React.FC = () => {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
-                    Ders
+                    Ders Değişkeni
                   </label>
-                  <input
-                    type="text"
+                  <select
                     value={newSubject}
                     onChange={e => setNewSubject(e.target.value)}
-                    className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 text-neutral-900 dark:text-white"
-                    required
-                  />
+                    className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 font-bold text-neutral-900 dark:text-white"
+                  >
+                    {subjects.map(subj => (
+                      <option key={subj} value={subj}>
+                        {subj}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block font-semibold text-neutral-700 dark:text-neutral-300 mb-1">

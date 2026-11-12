@@ -36,6 +36,7 @@ import { ScheduleItem } from '../../types';
 import { exportScheduleToExcel, copyScheduleForGoogleSheets, DAY_NAMES, getSubjectColor } from '../../utils/excelExport';
 import { BOX_THEMES } from '../theme/ThemeCustomizerModal';
 import { LeaderboardCard } from '../leaderboard/LeaderboardCard';
+import { normalizeSubjectName } from '../../constants/subjects';
 
 const DAYS = [
   { id: 0, label: 'Tüm Hafta' },
@@ -67,6 +68,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
     templates,
     addTemplate,
     applyTemplateToStudent,
+    subjects,
+    addSubjectVariable,
     startTimer,
     targetDaysLeft,
     boxTheme
@@ -107,6 +110,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
   const [newItemDay, setNewItemDay] = useState<number>(1);
   const [newItemSession, setNewItemSession] = useState<number>(1);
   const [newItemSubject, setNewItemSubject] = useState<string>('Matematik');
+  const [isAddingCustomSubject, setIsAddingCustomSubject] = useState<boolean>(false);
+  const [customSubjectDraft, setCustomSubjectDraft] = useState<string>('');
   const [newItemTopic, setNewItemTopic] = useState<string>('');
   const [newItemTime, setNewItemTime] = useState<string>(''); // Optional!
   const [newItemSource, setNewItemSource] = useState<string>('');
@@ -418,7 +423,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
     e.preventDefault();
     if (!activeStudent) return;
 
-    const cleanSubject = newItemSubject.trim() || 'Matematik';
+    const cleanSubject = normalizeSubjectName(newItemSubject.trim() || 'Matematik');
+    addSubjectVariable(cleanSubject);
     const cleanTopic = newItemTopic.trim() || 'Konu Çalışması';
     const sessionNum = Number(newItemSession) || 1;
     const weeksToCreate = newItemWeek === 'both' ? [1, 2] : [Number(newItemWeek) as 1 | 2];
@@ -1575,20 +1581,30 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                 </div>
               </div>
 
-              {/* Ders Adı ve Konu */}
+              {/* Ortak Ders Değişkeni ve Konu */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
-                    Ders Adı
+                    Ders Değişkeni
                   </label>
-                  <input
-                    type="text"
+                  <select
                     value={newItemSubject}
-                    onChange={e => setNewItemSubject(e.target.value)}
-                    placeholder="Ders adı"
-                    className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5"
-                    required
-                  />
+                    onChange={e => {
+                      if (e.target.value === '__ADD_NEW__') {
+                        setIsAddingCustomSubject(true);
+                      } else {
+                        setNewItemSubject(e.target.value);
+                      }
+                    }}
+                    className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 font-bold"
+                  >
+                    {subjects.map(subj => (
+                      <option key={subj} value={subj}>
+                        {subj}
+                      </option>
+                    ))}
+                    <option value="__ADD_NEW__">+ Yeni Ders Değişkeni Ekle...</option>
+                  </select>
                 </div>
 
                 <div>
@@ -1605,6 +1621,44 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                   />
                 </div>
               </div>
+
+              {isAddingCustomSubject && (
+                <div className="flex items-center gap-2 p-2.5 rounded-xl bg-blue-500/5 border border-blue-500/20">
+                  <input
+                    type="text"
+                    value={customSubjectDraft}
+                    onChange={e => setCustomSubjectDraft(e.target.value)}
+                    placeholder="Yeni ders değişkeni adı..."
+                    className="flex-1 p-2 rounded-lg bg-white dark:bg-neutral-900 border border-black/10 dark:border-white/10 text-xs font-bold"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (customSubjectDraft.trim()) {
+                        const norm = normalizeSubjectName(customSubjectDraft.trim());
+                        addSubjectVariable(norm);
+                        setNewItemSubject(norm);
+                        setCustomSubjectDraft('');
+                        setIsAddingCustomSubject(false);
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold cursor-pointer"
+                  >
+                    Ekle
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddingCustomSubject(false);
+                      setCustomSubjectDraft('');
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg bg-neutral-200 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 text-xs font-bold cursor-pointer"
+                  >
+                    İptal
+                  </button>
+                </div>
+              )}
 
               {/* Saat Aralığı ve Kaynak */}
               <div className="grid grid-cols-2 gap-3">

@@ -145,11 +145,16 @@ export interface ScheduleTemplate {
 
 export type ExamType = 'TYT' | 'AYT' | 'LGS' | 'Branş' | 'MSÜ' | 'Genel';
 
-export type ErrorReason = 
-  | 'Bilgi Eksikliği' 
-  | 'Dikkat / Okuma Hatası' 
-  | 'Süre Yetişmedi' 
-  | 'İşlem Hatası' 
+export type ErrorReason =
+  | 'Bilgi_Eksigi'
+  | 'Dikkat_Hatasi'
+  | 'Sure_Yetismedi'
+  | 'Islem_Hatasi'
+  | 'Kavram_Yanilsisi'
+  | 'Bilgi Eksikliği'
+  | 'Dikkat / Okuma Hatası'
+  | 'Süre Yetişmedi'
+  | 'İşlem Hatası'
   | 'Soru Kökünü Yanlış Anlama';
 
 export interface ExamSectionResult {
@@ -158,6 +163,13 @@ export interface ExamSectionResult {
   wrong: number;
   blank: number;
   net: number;
+}
+
+export interface ExamErrorTag {
+  subject: string;
+  topic: string;
+  reason: ErrorReason;
+  count: number;
 }
 
 export interface ExamQuestionError {
@@ -181,7 +193,8 @@ export interface TrialExam {
   totalWrong: number;
   totalBlank: number;
   totalNet: number;
-  errors: ExamQuestionError[];
+  errors?: ExamQuestionError[];
+  errorTags?: ExamErrorTag[];
 }
 
 export type HomeworkStatus = 'pending' | 'submitted' | 'approved' | 'rejected';
@@ -191,10 +204,12 @@ export interface Homework {
   studentId: string;
   teacherUid?: string;
   title: string;
-  description: string;
+  description?: string;
   subject: string;
   topic: string;
   sourceBook: string;
+  pageRange?: string;
+  teacherNote?: string;
   targetQuestionCount: number;
   dueDate: string; // YYYY-MM-DD
   status: HomeworkStatus;

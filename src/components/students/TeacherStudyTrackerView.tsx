@@ -8,9 +8,14 @@ import {
   ChevronLeft,
   ChevronRight,
   RotateCcw,
-  Flame
+  Flame,
+  Edit2,
+  Trash2,
+  X,
+  Check
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { normalizeSubjectName } from '../../constants/subjects';
 
 interface TeacherStudyTrackerViewProps {
   initialStudentId?: string;
@@ -19,6 +24,7 @@ interface TeacherStudyTrackerViewProps {
 
 export interface UnifiedStudyEntry {
   id: string;
+  rawId: string;
   studentId: string;
   studentName: string;
   dateKey: string; // YYYY-MM-DD local
@@ -110,10 +116,18 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
   const {
     students,
     classrooms,
+    subjects,
+    addSubjectVariable,
     focusSessions,
+    updateFocusSession,
+    deleteFocusSession,
     schedules,
+    updateScheduleItem,
+    deleteScheduleItem,
     homeworks,
+    updateHomework,
     trialExams,
+    deleteTrialExam,
     activities
   } = useApp();
 
@@ -125,6 +139,17 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeSubTab, setActiveSubTab] = useState<'student_comparison' | 'day_by_day'>('student_comparison');
   const [focusedHistoryDayKey, setFocusedHistoryDayKey] = useState<string>('ALL_7_DAYS');
+
+  // Edit & Delete State for Question / Study Records
+  const [editingEntry, setEditingEntry] = useState<UnifiedStudyEntry | null>(null);
+  const [editSubject, setEditSubject] = useState<string>('Matematik');
+  const [editTopic, setEditTopic] = useState<string>('');
+  const [editDurationMinutes, setEditDurationMinutes] = useState<number>(0);
+  const [editCorrect, setEditCorrect] = useState<number>(0);
+  const [editWrong, setEditWrong] = useState<number>(0);
+  const [editBlank, setEditBlank] = useState<number>(0);
+  const [editNote, setEditNote] = useState<string>('');
+  const [confirmDeleteEntryId, setConfirmDeleteEntryId] = useState<string | null>(null);
 
   // Keep selectedStudentId synced if initialStudentId prop changes
   React.useEffect(() => {
@@ -180,22 +205,25 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
       if (!visibleStudentIdsSet.has(sess.studentId)) return;
       const dKey = toLocalDateKey(sess.completedAt);
       if (!dKey) return;
+      const canonicalSubj = normalizeSubjectName(sess.subject);
       const qTotal = sess.solvedQuestions
         ? sess.solvedQuestions.correct + sess.solvedQuestions.wrong + sess.solvedQuestions.blank
         : 0;
       const ts = new Date(sess.completedAt).getTime() || Date.now();
+      coveredFocusKeys.add(`${sess.studentId}_${dKey}_${canonicalSubj}_${sess.topic}`);
       coveredFocusKeys.add(`${sess.studentId}_${dKey}_${sess.subject}_${sess.topic}`);
 
       entries.push({
         id: `focus_${sess.id}`,
+        rawId: sess.id,
         studentId: sess.studentId,
         studentName: sess.studentName || studentNameMap.get(sess.studentId) || 'Öğrenci',
         dateKey: dKey,
         timeLabel: formatTimeShort(sess.completedAt),
         timestampMs: ts,
         category: 'focus',
-        categoryLabel: 'Odak Oturumu',
-        subject: sess.subject,
+        categoryLabel: 'Odak & Soru Kaydı',
+        subject: canonicalSubj,
         topic: sess.topic,
         durationMinutes: sess.durationMinutes || 0,
         questionsTotal: qTotal,
@@ -222,6 +250,7 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
         dKey = toLocalDateKey(targetDate);
       }
 
+      const canonicalSubj = normalizeSubjectName(sch.subject);
       const qTotal = sch.solvedQuestions
         ? sch.solvedQuestions.correct + sch.solvedQuestions.wrong + sch.solvedQuestions.blank
         : (sch.targetType === 'question' ? (sch.targetValue || 0) : 0);
@@ -231,6 +260,7 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
 
       entries.push({
         id: `sch_${sch.id}`,
+        rawId: sch.id,
         studentId: sch.studentId,
         studentName: studentNameMap.get(sch.studentId) || 'Öğrenci',
         dateKey: dKey,
@@ -238,7 +268,7 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
         timestampMs: ts,
         category: 'schedule',
         categoryLabel: `${sch.sessionNumber || 1}. Oturum Tamamlandı`,
-        subject: sch.subject,
+        subject: canonicalSubj,
         topic: sch.topic || 'Program Ders Oturumu',
         durationMinutes: durMins,
         questionsTotal: qTotal,
@@ -258,12 +288,14 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
       const dKey = toLocalDateKey(submittedAt);
       if (!dKey) return;
 
+      const canonicalSubj = normalizeSubjectName(hw.subject);
       const sub = hw.studentSubmission;
       const qTotal = sub ? sub.correct + sub.wrong + sub.blank : (hw.targetQuestionCount || 0);
       const ts = submittedAt ? (new Date(submittedAt).getTime() || Date.now()) : Date.now();
 
       entries.push({
         id: `hw_${hw.id}`,
+        rawId: hw.id,
         studentId: hw.studentId,
         studentName: studentNameMap.get(hw.studentId) || 'Öğrenci',
         dateKey: dKey,
@@ -271,7 +303,7 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
         timestampMs: ts,
         category: 'homework',
         categoryLabel: 'Ödev Teslimi',
-        subject: hw.subject,
+        subject: canonicalSubj,
         topic: `${hw.title} (${hw.topic})`,
         durationMinutes: 0,
         questionsTotal: qTotal,
@@ -293,6 +325,7 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
 
       entries.push({
         id: `exam_${ex.id}`,
+        rawId: ex.id,
         studentId: ex.studentId,
         studentName: studentNameMap.get(ex.studentId) || 'Öğrenci',
         dateKey: dKey,
@@ -330,6 +363,7 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
       const ts = new Date(act.timestamp).getTime() || Date.now();
       entries.push({
         id: `act_${act.id}`,
+        rawId: act.id,
         studentId: act.studentId,
         studentName: act.studentName || studentNameMap.get(act.studentId) || 'Öğrenci',
         dateKey: dKey,
@@ -346,6 +380,73 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
 
     return entries.sort((a, b) => b.timestampMs - a.timestampMs);
   }, [focusSessions, schedules, homeworks, trialExams, activities, students, visibleStudentIdsSet]);
+
+  const handleOpenEditEntry = (entry: UnifiedStudyEntry) => {
+    setEditingEntry(entry);
+    setEditSubject(normalizeSubjectName(entry.subject));
+    setEditTopic(entry.topic || '');
+    setEditDurationMinutes(entry.durationMinutes || 0);
+    setEditCorrect(entry.correct ?? 0);
+    setEditWrong(entry.wrong ?? 0);
+    setEditBlank(entry.blank ?? 0);
+    setEditNote(entry.note || '');
+  };
+
+  const handleSaveEntryChanges = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingEntry) return;
+    const canonicalSubject = normalizeSubjectName(editSubject);
+    addSubjectVariable(canonicalSubject);
+    const c = Math.max(0, Number(editCorrect) || 0);
+    const w = Math.max(0, Number(editWrong) || 0);
+    const b = Math.max(0, Number(editBlank) || 0);
+    const net = Number(Math.max(0, c - w / 4).toFixed(2));
+    const durMins = Math.max(0, Math.round(Number(editDurationMinutes) || 0));
+
+    if (editingEntry.category === 'focus') {
+      await updateFocusSession(editingEntry.rawId, {
+        subject: canonicalSubject,
+        topic: editTopic.trim() || 'Konu Çalışması',
+        durationMinutes: Math.max(1, durMins || 1),
+        durationSeconds: Math.max(1, durMins || 1) * 60,
+        solvedQuestions: { correct: c, wrong: w, blank: b, net },
+        studentNote: editNote.trim() || ''
+      });
+    } else if (editingEntry.category === 'schedule') {
+      await updateScheduleItem(editingEntry.rawId, {
+        subject: canonicalSubject,
+        topic: editTopic.trim() || 'Program Ders Oturumu',
+        actualDurationMinutes: durMins,
+        solvedQuestions: { correct: c, wrong: w, blank: b, net }
+      });
+    } else if (editingEntry.category === 'homework') {
+      const targetHw = homeworks.find(h => h.id === editingEntry.rawId);
+      await updateHomework(editingEntry.rawId, {
+        subject: canonicalSubject,
+        studentSubmission: {
+          correct: c,
+          wrong: w,
+          blank: b,
+          net,
+          studentNote: editNote.trim() || '',
+          submittedAt: targetHw?.studentSubmission?.submittedAt || new Date().toISOString()
+        }
+      });
+    }
+
+    setEditingEntry(null);
+  };
+
+  const handleDeleteEntry = async (entry: UnifiedStudyEntry) => {
+    if (entry.category === 'focus') {
+      await deleteFocusSession(entry.rawId);
+    } else if (entry.category === 'schedule') {
+      await deleteScheduleItem(entry.rawId);
+    } else if (entry.category === 'exam') {
+      await deleteTrialExam(entry.rawId);
+    }
+    setConfirmDeleteEntryId(null);
+  };
 
   // Split into:
   // 1) Reference Day ("O Gün Yaptıkları")
@@ -399,6 +500,57 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   };
 
+  const renderEntryActions = (item: UnifiedStudyEntry) => {
+    const canEdit = item.category === 'focus' || item.category === 'schedule' || item.category === 'homework';
+    const canDelete = item.category === 'focus' || item.category === 'schedule' || item.category === 'exam';
+    if (!canEdit && !canDelete) return null;
+
+    return (
+      <div className="inline-flex items-center gap-1 shrink-0">
+        {canEdit && (
+          <button
+            type="button"
+            onClick={() => handleOpenEditEntry(item)}
+            className="p-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-blue-500/15 text-neutral-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+            title="Soru / Çalışma Kaydını Düzenle"
+          >
+            <Edit2 className="w-3 h-3" />
+          </button>
+        )}
+        {canDelete && (
+          confirmDeleteEntryId === item.id ? (
+            <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-[10px]">
+              <button
+                type="button"
+                onClick={() => handleDeleteEntry(item)}
+                className="font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+              >
+                Sil
+              </button>
+              <span className="text-neutral-300 dark:text-neutral-600">|</span>
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteEntryId(null)}
+                className="font-semibold text-neutral-500 cursor-pointer"
+              >
+                İptal
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmDeleteEntryId(item.id)}
+              className="p-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-rose-500/15 text-neutral-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer"
+              title="Kaydı Sil"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+          )
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-5 max-w-7xl mx-auto">
       {/* Header & Controls Bar */}
@@ -409,7 +561,7 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
               Günlük ve 1 Hafta Önceki Çalışma Takibi
             </h2>
             <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-              Öğrencilerinizin seçili günde yaptıklarını ve o günden 1 hafta önceki (son 7 günlük) çalışmalarını karşılaştırın.
+              Öğrencilerinizin seçili günde yaptıklarını ve o günden 1 hafta önceki (son 7 günlük) çalışmalarını karşılaştırın, soru kayıtlarını düzenleyin veya silin.
             </p>
           </div>
 
@@ -840,9 +992,12 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
                                 )}
                               </div>
 
-                              <span className="text-[11px] font-mono tabular-nums text-neutral-400 shrink-0">
-                                {item.timeLabel}
-                              </span>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="text-[11px] font-mono tabular-nums text-neutral-400">
+                                  {item.timeLabel}
+                                </span>
+                                {renderEntryActions(item)}
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -899,9 +1054,12 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
                                           {typeof item.net === 'number' && item.questionsTotal > 0 ? ` (${item.net} Net)` : ''}
                                         </div>
                                       </div>
-                                      <span className="text-[11px] font-mono tabular-nums text-neutral-400 shrink-0">
-                                        {item.timeLabel}
-                                      </span>
+                                      <div className="flex items-center gap-2 shrink-0">
+                                        <span className="text-[11px] font-mono tabular-nums text-neutral-400">
+                                          {item.timeLabel}
+                                        </span>
+                                        {renderEntryActions(item)}
+                                      </div>
                                     </div>
                                   ))}
                                 </div>
@@ -972,7 +1130,8 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
                           <th className="py-2 px-3">Tür</th>
                           <th className="py-2 px-3">Ders & Konu</th>
                           <th className="py-2 px-3 text-right">Süre</th>
-                          <th className="py-2 pl-3 text-right">Soru / Net</th>
+                          <th className="py-2 px-3 text-right">Soru / Net</th>
+                          <th className="py-2 pl-3 text-right">İşlem</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-black/5 dark:divide-white/5 font-mono tabular-nums">
@@ -993,10 +1152,13 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
                             <td className="py-2.5 px-3 text-right text-neutral-600 dark:text-neutral-300 whitespace-nowrap">
                               {item.durationMinutes > 0 ? `${item.durationMinutes} dk` : '-'}
                             </td>
-                            <td className="py-2.5 pl-3 text-right font-semibold text-neutral-900 dark:text-white whitespace-nowrap">
+                            <td className="py-2.5 px-3 text-right font-semibold text-neutral-900 dark:text-white whitespace-nowrap">
                               {item.questionsTotal > 0
                                 ? `${item.questionsTotal} soru${typeof item.net === 'number' ? ` (${item.net} Net)` : ''}`
                                 : '-'}
+                            </td>
+                            <td className="py-2.5 pl-3 text-right whitespace-nowrap font-sans">
+                              {renderEntryActions(item)}
                             </td>
                           </tr>
                         ))}
@@ -1007,6 +1169,145 @@ export const TeacherStudyTrackerView: React.FC<TeacherStudyTrackerViewProps> = (
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Soru / Çalışma Kaydı Düzenleme Modalı */}
+      {editingEntry && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 shadow-2xl p-5 sm:p-6">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-black/5 dark:border-white/5">
+              <div>
+                <h3 className="text-base font-bold text-neutral-900 dark:text-white">
+                  Çalışma & Soru Kaydını Düzenle
+                </h3>
+                <p className="text-xs text-neutral-500">
+                  {editingEntry.studentName} • {editingEntry.categoryLabel}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingEntry(null)}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEntryChanges} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-semibold text-neutral-600 dark:text-neutral-300 mb-1">
+                    Ders Değişkeni
+                  </label>
+                  <select
+                    value={editSubject}
+                    onChange={e => setEditSubject(e.target.value)}
+                    className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 font-bold text-neutral-900 dark:text-white focus:outline-none"
+                  >
+                    {subjects.map(subj => (
+                      <option key={subj} value={subj}>
+                        {subj}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-neutral-600 dark:text-neutral-300 mb-1">
+                    Konu
+                  </label>
+                  <input
+                    type="text"
+                    value={editTopic}
+                    onChange={e => setEditTopic(e.target.value)}
+                    className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 font-bold text-neutral-900 dark:text-white"
+                    required
+                  />
+                </div>
+              </div>
+
+              {editingEntry.category !== 'homework' && (
+                <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 flex items-center justify-between gap-3">
+                  <div>
+                    <label className="block font-bold text-neutral-900 dark:text-white">
+                      Çalışma Süresi (Dakika)
+                    </label>
+                    <span className="text-[11px] text-neutral-500">Kayıtlı çalışma süresi</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min={0}
+                      max={720}
+                      value={editDurationMinutes}
+                      onChange={e => setEditDurationMinutes(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                      className="w-20 p-2 rounded-xl bg-white dark:bg-neutral-900 border border-black/10 dark:border-white/15 text-center font-extrabold font-mono text-sm text-blue-600 dark:text-blue-400 focus:outline-none"
+                    />
+                    <span className="text-xs font-bold text-neutral-500">dk</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="p-3.5 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-black/5 dark:border-white/5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-neutral-700 dark:text-neutral-300">Çözülen Soru Sayıları</span>
+                  <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
+                    Net: {Math.max(0, Number((editCorrect - editWrong / 4).toFixed(2)))}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="p-2 rounded-lg bg-emerald-500/10 text-center">
+                    <label className="block text-[10px] font-bold text-emerald-600 mb-1">Doğru</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={editCorrect}
+                      onChange={e => setEditCorrect(Math.max(0, Number(e.target.value)))}
+                      className="w-full bg-transparent text-center font-mono font-bold text-sm text-emerald-600 focus:outline-none"
+                    />
+                  </div>
+                  <div className="p-2 rounded-lg bg-rose-500/10 text-center">
+                    <label className="block text-[10px] font-bold text-rose-600 mb-1">Yanlış</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={editWrong}
+                      onChange={e => setEditWrong(Math.max(0, Number(e.target.value)))}
+                      className="w-full bg-transparent text-center font-mono font-bold text-sm text-rose-600 focus:outline-none"
+                    />
+                  </div>
+                  <div className="p-2 rounded-lg bg-neutral-500/10 text-center">
+                    <label className="block text-[10px] font-bold text-neutral-500 mb-1">Boş</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={editBlank}
+                      onChange={e => setEditBlank(Math.max(0, Number(e.target.value)))}
+                      className="w-full bg-transparent text-center font-mono font-bold text-sm text-neutral-600 dark:text-neutral-300 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-black/5 dark:border-white/5">
+                <button
+                  type="button"
+                  onClick={() => setEditingEntry(null)}
+                  className="px-4 py-2 rounded-xl text-neutral-500 font-semibold cursor-pointer"
+                >
+                  İptal
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Kaydet</span>
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

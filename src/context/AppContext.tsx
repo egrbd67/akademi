@@ -41,14 +41,18 @@ import {
   saveHomeworkToFirestore,
   updateHomeworkInFirestore,
   saveFocusSessionToFirestore,
+  updateFocusSessionInFirestore,
+  deleteFocusSessionFromFirestore,
   saveAnnouncementToFirestore,
   updateAnnouncementInFirestore,
   deleteAnnouncementFromFirestore,
   saveAssignedExamToFirestore,
   deleteAssignedExamFromFirestore,
   saveTrialExamToFirestore,
+  updateTrialExamInFirestore,
   deleteTrialExamFromFirestore
 } from '../services/firestoreService';
+import { STANDARD_SUBJECTS, normalizeSubjectName } from '../constants/subjects';
 
 interface QuestionEntryState {
   isOpen: boolean;
@@ -123,9 +127,14 @@ interface AppContextType {
   addTemplate: (tpl: Omit<ScheduleTemplate, 'id'>) => void;
   applyTemplateToStudent: (templateId: string, studentId: string) => void;
 
+  // Shared Subject Variables
+  subjects: string[];
+  addSubjectVariable: (subjectName: string) => void;
+
   // Trial Exams
   trialExams: TrialExam[];
   addTrialExam: (exam: Omit<TrialExam, 'id'>) => Promise<string>;
+  updateTrialExam: (id: string, updates: Partial<TrialExam>) => Promise<void>;
   deleteTrialExam: (id: string) => Promise<void>;
 
   // Homeworks
@@ -136,6 +145,8 @@ interface AppContextType {
   // Focus Sessions
   focusSessions: FocusSession[];
   addFocusSession: (session: Omit<FocusSession, 'id' | 'completedAt' | 'sentToTeacher'> & { sentToTeacher?: boolean }) => Promise<void>;
+  updateFocusSession: (id: string, updates: Partial<FocusSession>) => Promise<void>;
+  deleteFocusSession: (id: string) => Promise<void>;
   giveTeacherFeedbackToFocusSession: (sessionId: string, feedback: string) => Promise<void>;
 
   // Announcements & Notifications
@@ -326,6 +337,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [rawAssignedExams, setRawAssignedExams] = useState<AssignedExam[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [templates, setTemplates] = useState<ScheduleTemplate[]>([]);
+  const [customSubjectVars, setCustomSubjectVars] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(`${STORAGE_PREFIX}custom_subjects`);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
 
   // Connectivity
   const [isFirestoreReady, setIsFirestoreReady] = useState(false);
@@ -801,6 +820,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!activeTeacherId) return [];
     return rawAssignedExams.filter(ex => ex.teacherUid === activeTeacherId);
   }, [rawAssignedExams, activeTeacherId]);
+
+  const addSubjectVariable = useCallback((subjectName: string) => {
+    const normalized = normalizeSubjectName(subjectName);
+    if (!normalized) return;
+    setCustomSubjectVars(prev => {
+      if (prev.some(s => s.toLocaleLowerCase('tr-TR') === normalized.toLocaleLowerCase('tr-TR'))) {
+        return prev;
+      }
+      const next = [...prev, normalized];
+      try {
+        localStorage.setItem(`${STORAGE_PREFIX}custom_subjects`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  const subjects = useMemo(() => {
+    const seen = new Map<string, string>();
+    const register = (raw?: string | null) => {
+      if (!raw || !raw.trim()) return;
+      const norm = normalizeSubjectName(raw);
+      const key = norm.toLocaleLowerCase('tr-TR');
+      if (!seen.has(key)) {
+        seen.set(key, norm);
+      }
+    };
+
+    STANDARD_SUBJECTS.forEach(register);
+    customSubjectVars.forEach(register);
+    schedules.forEach(s => register(s.subject));
+    focusSessions.forEach(f => register(f.subject));
+    homeworks.forEach(h => register(h.subject));
+    trialExams.forEach(ex => {
+      (ex.sections || []).forEach(sec => register(sec.name));
+      (ex.errorTags || []).forEach(tag => register(tag.subject));
+    });
+
+    return Array.from(seen.values());
+  }, [customSubjectVars, schedules, focusSessions, homeworks, trialExams]);
 
   // Keep notifications strictly scoped to the active teacher's announcements
   useEffect(() => {
@@ -1294,8 +1352,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addTrialExam = useCallback(async (exam: Omit<TrialExam, 'id'>) => {
     const id = `ex_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const ownerTeacherId = currentTeacher?.id || firebaseUser?.uid || currentStudent?.teacherUid || activeTeacherId;
+    const normalizedSections = (exam.sections || []).map(sec => ({
+      ...sec,
+      name: normalizeSubjectName(sec.name)
+    }));
+    const normalizedTags = (exam.errorTags || []).map(tag => ({
+      ...tag,
+      subject: normalizeSubjectName(tag.subject)
+    }));
     const newExam: TrialExam = {
       ...exam,
+      sections: normalizedSections,
+      errorTags: normalizedTags,
       id,
       teacherUid: ownerTeacherId
     };
@@ -1317,6 +1385,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return id;
   }, [firebaseUser, currentTeacher, currentStudent, activeTeacherId, logActivity]);
 
+  const updateTrialExam = useCallback(async (id: string, updates: Partial<TrialExam>) => {
+    const normalizedUpdates: Partial<TrialExam> = {
+      ...updates,
+      ...(updates.sections
+        ? {
+            sections: updates.sections.map(sec => ({
+              ...sec,
+              name: normalizeSubjectName(sec.name)
+            }))
+          }
+        : {}),
+      ...(updates.errorTags
+        ? {
+            errorTags: updates.errorTags.map(tag => ({
+              ...tag,
+              subject: normalizeSubjectName(tag.subject)
+            }))
+          }
+        : {})
+    };
+    setRawTrialExams(prev => prev.map(e => e.id === id ? { ...e, ...normalizedUpdates } : e));
+    await updateTrialExamInFirestore(id, normalizedUpdates);
+  }, []);
+
   const deleteTrialExam = useCallback(async (id: string) => {
     setRawTrialExams(prev => prev.filter(e => e.id !== id));
     await deleteTrialExamFromFirestore(id);
@@ -1327,8 +1419,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const id = `fcs_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const targetSt = students.find(s => s.id === session.studentId) || (currentStudent?.id === session.studentId ? currentStudent : undefined);
     const ownerTeacherId = session.teacherUid || targetSt?.teacherUid || activeTeacherId;
+    const canonicalSubject = normalizeSubjectName(session.subject);
     const newSession: FocusSession = {
       ...session,
+      subject: canonicalSubject,
       id,
       teacherUid: ownerTeacherId,
       completedAt: new Date().toISOString(),
@@ -1364,19 +1458,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       studentName: session.studentName,
       teacherUid: ownerTeacherId,
       type: session.solvedQuestions ? 'question_solved' : 'focus_completed',
-      title: `${session.subject} • ${session.topic}`,
+      title: `${canonicalSubject} • ${session.topic}`,
       detail: `${session.studentName}, ${session.durationMinutes} dk odaklandı${qText}.${earnedStreakNow ? ' (+1 Gün Seri)' : ''}`
     });
   }, [logActivity, students, currentStudent, activeTeacherId]);
 
+  const updateFocusSession = useCallback(async (id: string, updates: Partial<FocusSession>) => {
+    const normalizedUpdates: Partial<FocusSession> = {
+      ...updates,
+      ...(updates.subject ? { subject: normalizeSubjectName(updates.subject) } : {})
+    };
+    setRawFocusSessions(prev => prev.map(f => f.id === id ? { ...f, ...normalizedUpdates } : f));
+    await updateFocusSessionInFirestore(id, normalizedUpdates);
+  }, []);
+
+  const deleteFocusSession = useCallback(async (id: string) => {
+    setRawFocusSessions(prev => prev.filter(f => f.id !== id));
+    await deleteFocusSessionFromFirestore(id);
+  }, []);
+
   const giveTeacherFeedbackToFocusSession = useCallback(async (sessionId: string, feedback: string) => {
     const session = focusSessions.find(f => f.id === sessionId);
     if (session) {
-      await saveFocusSessionToFirestore({
+      const updated = {
         ...session,
         teacherFeedback: feedback,
         teacherFeedbackAt: new Date().toISOString()
-      });
+      };
+      setRawFocusSessions(prev => prev.map(f => f.id === sessionId ? updated : f));
+      await saveFocusSessionToFirestore(updated);
     }
   }, [focusSessions]);
 
@@ -1942,14 +2052,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         templates,
         addTemplate,
         applyTemplateToStudent,
+        subjects,
+        addSubjectVariable,
         trialExams,
         addTrialExam,
+        updateTrialExam,
         deleteTrialExam,
         homeworks,
         addHomework,
         updateHomework,
         focusSessions,
         addFocusSession,
+        updateFocusSession,
+        deleteFocusSession,
         giveTeacherFeedbackToFocusSession,
         announcements,
         addAnnouncement,

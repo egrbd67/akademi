@@ -12,19 +12,28 @@ import {
   Check,
   Eye,
   EyeOff,
-  Maximize2
+  Maximize2,
+  Edit2,
+  Trash2,
+  Plus,
+  X
 } from 'lucide-react';
 import { useApp, playFocusFinishSound } from '../../context/AppContext';
-import { SolvedQuestions } from '../../types';
+import { FocusSession, SolvedQuestions } from '../../types';
 import { getThemeStyles } from '../theme/ThemeCustomizerModal';
+import { normalizeSubjectName } from '../../constants/subjects';
 
 export const FocusModeView: React.FC = () => {
   const {
     role,
     currentStudent,
     students,
+    subjects,
+    addSubjectVariable,
     focusSessions,
     addFocusSession,
+    updateFocusSession,
+    deleteFocusSession,
     giveTeacherFeedbackToFocusSession,
     boxTheme,
     activeTimer,
@@ -45,8 +54,12 @@ export const FocusModeView: React.FC = () => {
   const [customTargetInput, setCustomTargetInput] = useState<string>('');
   const [isEditingCustomMin, setIsEditingCustomMin] = useState<boolean>(false);
 
-  const [selectedSubject, setSelectedSubject] = useState<string>(activeTimer?.subject || 'Matematik');
+  const [selectedSubject, setSelectedSubject] = useState<string>(
+    normalizeSubjectName(activeTimer?.subject || 'Matematik')
+  );
   const [selectedTopic, setSelectedTopic] = useState<string>(activeTimer?.topic || 'Konu Çalışması');
+  const [isAddingCustomSubject, setIsAddingCustomSubject] = useState<boolean>(false);
+  const [newSubjectInput, setNewSubjectInput] = useState<string>('');
 
   const [isReportModalOpen, setIsReportModalOpen] = useState<boolean>(false);
   const [manualDurationMinutes, setManualDurationMinutes] = useState<number>(25);
@@ -58,6 +71,18 @@ export const FocusModeView: React.FC = () => {
   const [activeFeedbackSessionId, setActiveFeedbackSessionId] = useState<string | null>(null);
   const [feedbackText, setFeedbackText] = useState<string>('');
   const [filterStudentId, setFilterStudentId] = useState<string>('ALL');
+  const [filterSubject, setFilterSubject] = useState<string>('ALL');
+
+  // Edit & Delete States for Focus / Question Records
+  const [editingSession, setEditingSession] = useState<FocusSession | null>(null);
+  const [editSubject, setEditSubject] = useState<string>('Matematik');
+  const [editTopic, setEditTopic] = useState<string>('');
+  const [editDurationMinutes, setEditDurationMinutes] = useState<number>(25);
+  const [editCorrect, setEditCorrect] = useState<number>(0);
+  const [editWrong, setEditWrong] = useState<number>(0);
+  const [editBlank, setEditBlank] = useState<number>(0);
+  const [editNote, setEditNote] = useState<string>('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Keep local form fields synced when an activeTimer is already running from Schedule/Homework or FocusMode
   useEffect(() => {
@@ -66,7 +91,7 @@ export const FocusModeView: React.FC = () => {
       if (activeTimer.initialDurationMinutes) {
         setTargetMinutes(activeTimer.initialDurationMinutes);
       }
-      if (activeTimer.subject) setSelectedSubject(activeTimer.subject);
+      if (activeTimer.subject) setSelectedSubject(normalizeSubjectName(activeTimer.subject));
       if (activeTimer.topic) setSelectedTopic(activeTimer.topic);
     }
   }, [activeTimer?.mode, activeTimer?.initialDurationMinutes, activeTimer?.subject, activeTimer?.topic]);
@@ -96,10 +121,21 @@ export const FocusModeView: React.FC = () => {
     ? Math.min(100, (elapsedSeconds / totalTargetSec) * 100)
     : Math.min(100, ((elapsedSeconds % 3600) / 3600) * 100);
 
+  const handleAddNewSubjectVariable = () => {
+    const clean = newSubjectInput.trim();
+    if (!clean) return;
+    const norm = normalizeSubjectName(clean);
+    addSubjectVariable(norm);
+    setSelectedSubject(norm);
+    setNewSubjectInput('');
+    setIsAddingCustomSubject(false);
+  };
+
   const handleStart = () => {
+    const canonicalSubject = normalizeSubjectName(selectedSubject);
     if (activeTimer) {
       updateTimerState({
-        subject: selectedSubject.trim() || 'Matematik',
+        subject: canonicalSubject,
         topic: selectedTopic.trim() || 'Konu Çalışması',
         mode,
         initialDurationMinutes: targetMinutes,
@@ -108,7 +144,7 @@ export const FocusModeView: React.FC = () => {
       resumeTimer();
     } else {
       startTimer({
-        subject: selectedSubject.trim() || 'Matematik',
+        subject: canonicalSubject,
         topic: selectedTopic.trim() || 'Konu Çalışması',
         mode,
         initialMinutes: targetMinutes,
@@ -126,9 +162,10 @@ export const FocusModeView: React.FC = () => {
   };
 
   const handleOpenFullscreen = () => {
+    const canonicalSubject = normalizeSubjectName(selectedSubject);
     if (activeTimer) {
       updateTimerState({
-        subject: selectedSubject.trim() || 'Matematik',
+        subject: canonicalSubject,
         topic: selectedTopic.trim() || 'Konu Çalışması',
         mode,
         initialDurationMinutes: targetMinutes
@@ -136,7 +173,7 @@ export const FocusModeView: React.FC = () => {
       expandTimer();
     } else {
       startTimer({
-        subject: selectedSubject.trim() || 'Matematik',
+        subject: canonicalSubject,
         topic: selectedTopic.trim() || 'Konu Çalışması',
         mode,
         initialMinutes: targetMinutes,
@@ -163,7 +200,8 @@ export const FocusModeView: React.FC = () => {
     const targetSt = currentStudent || students[0];
     if (!targetSt) return;
 
-    const finalSubject = selectedSubject.trim() || 'Genel Çalışma';
+    const finalSubject = normalizeSubjectName(selectedSubject);
+    addSubjectVariable(finalSubject);
     const finalTopic = selectedTopic.trim() || 'Konu Çalışması';
     const durationMins = Math.max(1, Math.round(Number(manualDurationMinutes) || 1));
 
@@ -196,6 +234,51 @@ export const FocusModeView: React.FC = () => {
     setSolvedBlank(0);
   };
 
+  const handleOpenEditModal = (sess: FocusSession) => {
+    setEditingSession(sess);
+    setEditSubject(normalizeSubjectName(sess.subject));
+    setEditTopic(sess.topic || 'Konu Çalışması');
+    setEditDurationMinutes(Math.max(1, sess.durationMinutes || 25));
+    setEditCorrect(sess.solvedQuestions?.correct ?? 0);
+    setEditWrong(sess.solvedQuestions?.wrong ?? 0);
+    setEditBlank(sess.solvedQuestions?.blank ?? 0);
+    setEditNote(sess.studentNote || '');
+  };
+
+  const handleSaveEditedSession = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSession) return;
+    const canonicalSubject = normalizeSubjectName(editSubject);
+    addSubjectVariable(canonicalSubject);
+    const cleanTopic = editTopic.trim() || 'Konu Çalışması';
+    const durationMins = Math.max(1, Math.round(Number(editDurationMinutes) || 1));
+    const c = Math.max(0, Number(editCorrect) || 0);
+    const w = Math.max(0, Number(editWrong) || 0);
+    const b = Math.max(0, Number(editBlank) || 0);
+    const net = Number(Math.max(0, c - w / 4).toFixed(2));
+
+    await updateFocusSession(editingSession.id, {
+      subject: canonicalSubject,
+      topic: cleanTopic,
+      durationMinutes: durationMins,
+      durationSeconds: durationMins * 60,
+      solvedQuestions: {
+        correct: c,
+        wrong: w,
+        blank: b,
+        net
+      },
+      studentNote: editNote.trim() || ''
+    });
+
+    setEditingSession(null);
+  };
+
+  const handleConfirmDeleteSession = async (id: string) => {
+    await deleteFocusSession(id);
+    setConfirmDeleteId(null);
+  };
+
   const handleSendTeacherFeedback = (sessionId: string) => {
     if (!feedbackText.trim()) return;
     giveTeacherFeedbackToFocusSession(sessionId, feedbackText.trim());
@@ -204,23 +287,35 @@ export const FocusModeView: React.FC = () => {
   };
 
   const filteredFocusSessions = useMemo(() => {
+    let base: FocusSession[] = [];
     if (role === 'student') {
       if (!currentStudent?.id) return [];
-      return focusSessions.filter(s => s.studentId === currentStudent.id);
+      base = focusSessions.filter(s => s.studentId === currentStudent.id);
+    } else {
+      const ownStudentIds = new Set(students.map(s => s.id));
+      const teacherSessions = focusSessions.filter(s => ownStudentIds.has(s.studentId));
+      base = filterStudentId === 'ALL'
+        ? teacherSessions
+        : teacherSessions.filter(s => s.studentId === filterStudentId);
     }
-    const ownStudentIds = new Set(students.map(s => s.id));
-    const teacherSessions = focusSessions.filter(s => ownStudentIds.has(s.studentId));
-    if (filterStudentId === 'ALL') return teacherSessions;
-    return teacherSessions.filter(s => s.studentId === filterStudentId);
-  }, [focusSessions, filterStudentId, role, currentStudent?.id, students]);
+    if (filterSubject !== 'ALL') {
+      return base.filter(s => normalizeSubjectName(s.subject) === filterSubject);
+    }
+    return base;
+  }, [focusSessions, filterStudentId, filterSubject, role, currentStudent?.id, students]);
 
   const sessionStats = useMemo(() => {
     const totalMinutes = filteredFocusSessions.reduce((acc, curr) => acc + curr.durationMinutes, 0);
     const todayReports = filteredFocusSessions.filter(s => s.completedAt.startsWith(todayStr)).length;
+    const totalQuestions = filteredFocusSessions.reduce((acc, curr) => {
+      if (!curr.solvedQuestions) return acc;
+      return acc + curr.solvedQuestions.correct + curr.solvedQuestions.wrong + curr.solvedQuestions.blank;
+    }, 0);
     return {
       totalHours: (totalMinutes / 60).toFixed(1),
       totalReports: filteredFocusSessions.length,
-      todayReports
+      todayReports,
+      totalQuestions
     };
   }, [filteredFocusSessions, todayStr]);
 
@@ -230,7 +325,7 @@ export const FocusModeView: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-black/5 dark:border-white/5">
         <div className="flex items-center gap-2.5 flex-wrap">
           <h1 className="text-lg sm:text-xl font-bold text-neutral-900 dark:text-white">
-            Odak Modu
+            Odak Modu & Soru Kayıtları
           </h1>
           {activeTimer && (
             <button
@@ -398,26 +493,69 @@ export const FocusModeView: React.FC = () => {
           </div>
         )}
 
-        {/* Ders ve Konu */}
-        <div className="max-w-md mx-auto mb-5">
+        {/* Ortak Ders Değişkeni Seçimi ve Konu */}
+        <div className="max-w-lg mx-auto mb-5 space-y-2">
           <div className="flex items-center justify-center gap-2">
-            <input
-              type="text"
-              value={selectedSubject}
-              onChange={e => setSelectedSubject(e.target.value)}
-              placeholder="Ders"
-              disabled={isRunning}
-              className="w-1/2 p-2 rounded-xl text-xs bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 text-center font-bold"
-            />
+            <div className="w-1/2 flex items-center gap-1">
+              <select
+                value={selectedSubject}
+                onChange={e => {
+                  if (e.target.value === '__ADD_NEW__') {
+                    setIsAddingCustomSubject(true);
+                  } else {
+                    setSelectedSubject(e.target.value);
+                  }
+                }}
+                disabled={isRunning}
+                className="w-full p-2.5 rounded-xl text-xs bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 font-bold text-neutral-900 dark:text-white focus:outline-none cursor-pointer"
+              >
+                {subjects.map(subj => (
+                  <option key={subj} value={subj}>
+                    {subj}
+                  </option>
+                ))}
+                <option value="__ADD_NEW__">+ Yeni Ders Değişkeni Ekle...</option>
+              </select>
+            </div>
             <input
               type="text"
               value={selectedTopic}
               onChange={e => setSelectedTopic(e.target.value)}
-              placeholder="Konu"
+              placeholder="Konu Başlığı"
               disabled={isRunning}
-              className="w-1/2 p-2 rounded-xl text-xs bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 text-center font-bold"
+              className="w-1/2 p-2.5 rounded-xl text-xs bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 text-center font-bold text-neutral-900 dark:text-white"
             />
           </div>
+
+          {isAddingCustomSubject && (
+            <div className="flex items-center justify-center gap-1.5 pt-1">
+              <input
+                type="text"
+                value={newSubjectInput}
+                onChange={e => setNewSubjectInput(e.target.value)}
+                placeholder="Yeni ders adı (Örn: Paragraf, Analitik Geometri)"
+                className="flex-1 px-3 py-1.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-blue-500/40 text-xs font-bold text-neutral-900 dark:text-white"
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={handleAddNewSubjectVariable}
+                className="px-3 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-bold cursor-pointer"
+              >
+                Ekle
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddingCustomSubject(false);
+                  setNewSubjectInput('');
+                }}
+                className="px-2.5 py-1.5 rounded-xl bg-neutral-200 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 text-xs font-bold cursor-pointer"
+              >
+                İptal
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Sayaç Göstergesi */}
@@ -524,14 +662,20 @@ export const FocusModeView: React.FC = () => {
             <form onSubmit={handleSubmitFocusReport} className="space-y-3.5 text-xs">
               <div className="grid grid-cols-2 gap-2.5">
                 <div>
-                  <label className="block font-semibold text-neutral-600 dark:text-neutral-300 mb-1">Ders</label>
-                  <input
-                    type="text"
+                  <label className="block font-semibold text-neutral-600 dark:text-neutral-300 mb-1">
+                    Ders Değişkeni
+                  </label>
+                  <select
                     value={selectedSubject}
                     onChange={e => setSelectedSubject(e.target.value)}
-                    className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 font-bold text-neutral-900 dark:text-white"
-                    required
-                  />
+                    className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 font-bold text-neutral-900 dark:text-white focus:outline-none"
+                  >
+                    {subjects.map(subj => (
+                      <option key={subj} value={subj}>
+                        {subj}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block font-semibold text-neutral-600 dark:text-neutral-300 mb-1">Konu</label>
@@ -599,7 +743,7 @@ export const FocusModeView: React.FC = () => {
                       min={0}
                       value={solvedCorrect}
                       onChange={e => setSolvedCorrect(Math.max(0, Number(e.target.value)))}
-                      className="w-full p-1 rounded bg-white dark:bg-neutral-800 text-center font-bold font-mono text-emerald-600"
+                      className="w-full bg-transparent text-center font-mono font-bold text-sm text-emerald-600 focus:outline-none"
                     />
                   </div>
                   <div className="p-2 rounded-lg bg-rose-500/10 text-center">
@@ -609,17 +753,17 @@ export const FocusModeView: React.FC = () => {
                       min={0}
                       value={solvedWrong}
                       onChange={e => setSolvedWrong(Math.max(0, Number(e.target.value)))}
-                      className="w-full p-1 rounded bg-white dark:bg-neutral-800 text-center font-bold font-mono text-rose-600"
+                      className="w-full bg-transparent text-center font-mono font-bold text-sm text-rose-600 focus:outline-none"
                     />
                   </div>
-                  <div className="p-2 rounded-lg bg-neutral-200/70 dark:bg-neutral-800 text-center">
+                  <div className="p-2 rounded-lg bg-neutral-500/10 text-center">
                     <label className="block text-[10px] font-bold text-neutral-500 mb-1">Boş</label>
                     <input
                       type="number"
                       min={0}
                       value={solvedBlank}
                       onChange={e => setSolvedBlank(Math.max(0, Number(e.target.value)))}
-                      className="w-full p-1 rounded bg-white dark:bg-neutral-900 text-center font-bold font-mono text-neutral-700 dark:text-neutral-300"
+                      className="w-full bg-transparent text-center font-mono font-bold text-sm text-neutral-600 dark:text-neutral-300 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -627,20 +771,20 @@ export const FocusModeView: React.FC = () => {
 
               <div>
                 <label className="block font-semibold text-neutral-600 dark:text-neutral-300 mb-1">Not</label>
-                <input
-                  type="text"
+                <textarea
                   value={studentNote}
                   onChange={e => setStudentNote(e.target.value)}
-                  placeholder="İsteğe bağlı not..."
-                  className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 text-neutral-900 dark:text-white"
+                  placeholder="Kısa notunuz..."
+                  rows={2}
+                  className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2">
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-black/5 dark:border-white/5">
                 <button
                   type="button"
                   onClick={() => setIsReportModalOpen(false)}
-                  className="px-4 py-2 rounded-xl font-semibold text-neutral-500 cursor-pointer"
+                  className="px-4 py-2 rounded-xl text-neutral-500 font-semibold cursor-pointer"
                 >
                   İptal
                 </button>
@@ -649,7 +793,7 @@ export const FocusModeView: React.FC = () => {
                   className="px-5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold flex items-center gap-1.5 cursor-pointer"
                 >
                   <Send className="w-3.5 h-3.5" />
-                  <span>Kaydet</span>
+                  <span>Gönder</span>
                 </button>
               </div>
             </form>
@@ -657,107 +801,332 @@ export const FocusModeView: React.FC = () => {
         </div>
       )}
 
-      {/* Geçmiş Odak Seansları */}
+      {/* Soru / Odak Kaydını Düzenleme Modalı */}
+      {editingSession && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 shadow-2xl p-5 sm:p-6">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-black/5 dark:border-white/5">
+              <div className="flex items-center gap-2">
+                <Edit2 className="w-4 h-4 text-blue-500" />
+                <div>
+                  <h3 className="text-base font-bold text-neutral-900 dark:text-white">
+                    Soru & Odak Kaydını Düzenle
+                  </h3>
+                  <p className="text-xs text-neutral-500">
+                    {editingSession.studentName} • {new Date(editingSession.completedAt).toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingSession(null)}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditedSession} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block font-semibold text-neutral-600 dark:text-neutral-300 mb-1">
+                    Ders Değişkeni
+                  </label>
+                  <select
+                    value={editSubject}
+                    onChange={e => setEditSubject(e.target.value)}
+                    className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 font-bold text-neutral-900 dark:text-white focus:outline-none"
+                  >
+                    {subjects.map(subj => (
+                      <option key={subj} value={subj}>
+                        {subj}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-neutral-600 dark:text-neutral-300 mb-1">
+                    Konu
+                  </label>
+                  <input
+                    type="text"
+                    value={editTopic}
+                    onChange={e => setEditTopic(e.target.value)}
+                    className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 font-bold text-neutral-900 dark:text-white"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 flex items-center justify-between gap-3">
+                <div>
+                  <label className="block font-bold text-neutral-900 dark:text-white">
+                    Çalışma Süresi (Dakika)
+                  </label>
+                  <span className="text-[11px] text-neutral-500">Kayıtlı çalışma süresi</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min={1}
+                    max={720}
+                    value={editDurationMinutes}
+                    onChange={e => setEditDurationMinutes(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    className="w-20 p-2 rounded-xl bg-white dark:bg-neutral-900 border border-black/10 dark:border-white/15 text-center font-extrabold font-mono text-sm text-blue-600 dark:text-blue-400 focus:outline-none"
+                    required
+                  />
+                  <span className="text-xs font-bold text-neutral-500">dk</span>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-black/5 dark:border-white/5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-neutral-700 dark:text-neutral-300">Çözülen Soru Sayıları</span>
+                  <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
+                    Net: {Math.max(0, Number((editCorrect - editWrong / 4).toFixed(2)))}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="p-2 rounded-lg bg-emerald-500/10 text-center">
+                    <label className="block text-[10px] font-bold text-emerald-600 mb-1">Doğru</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={editCorrect}
+                      onChange={e => setEditCorrect(Math.max(0, Number(e.target.value)))}
+                      className="w-full bg-transparent text-center font-mono font-bold text-sm text-emerald-600 focus:outline-none"
+                    />
+                  </div>
+                  <div className="p-2 rounded-lg bg-rose-500/10 text-center">
+                    <label className="block text-[10px] font-bold text-rose-600 mb-1">Yanlış</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={editWrong}
+                      onChange={e => setEditWrong(Math.max(0, Number(e.target.value)))}
+                      className="w-full bg-transparent text-center font-mono font-bold text-sm text-rose-600 focus:outline-none"
+                    />
+                  </div>
+                  <div className="p-2 rounded-lg bg-neutral-500/10 text-center">
+                    <label className="block text-[10px] font-bold text-neutral-500 mb-1">Boş</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={editBlank}
+                      onChange={e => setEditBlank(Math.max(0, Number(e.target.value)))}
+                      className="w-full bg-transparent text-center font-mono font-bold text-sm text-neutral-600 dark:text-neutral-300 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-neutral-600 dark:text-neutral-300 mb-1">Not</label>
+                <textarea
+                  value={editNote}
+                  onChange={e => setEditNote(e.target.value)}
+                  placeholder="Kısa notunuz..."
+                  rows={2}
+                  className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-black/5 dark:border-white/5">
+                <button
+                  type="button"
+                  onClick={() => setEditingSession(null)}
+                  className="px-4 py-2 rounded-xl text-neutral-500 font-semibold cursor-pointer"
+                >
+                  İptal
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Değişiklikleri Kaydet</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Geçmiş Odak & Soru Kayıtları Listesi (Düzenleme ve Silme Özellikli) */}
       <div className="p-5 rounded-2xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-black/5 dark:border-white/5">
-          <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-blue-500" />
-            <h2 className="font-bold text-sm text-neutral-900 dark:text-white">
-              Odak Kayıtları ({sessionStats.totalReports} Seans • {sessionStats.totalHours} Saat)
+          <div>
+            <h2 className="text-sm font-bold text-neutral-900 dark:text-white">
+              Odak & Soru Kayıtları
             </h2>
+            <p className="text-xs text-neutral-400">
+              Toplam {sessionStats.totalHours} saat • {sessionStats.totalQuestions} soru • {sessionStats.totalReports} kayıt (Bugün {sessionStats.todayReports})
+            </p>
           </div>
 
-          {role === 'teacher' && students.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap">
             <select
-              value={filterStudentId}
-              onChange={e => setFilterStudentId(e.target.value)}
-              className="px-3 py-1.5 rounded-xl text-xs bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 font-semibold"
+              value={filterSubject}
+              onChange={e => setFilterSubject(e.target.value)}
+              className="px-3 py-1.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 text-xs font-bold"
             >
-              <option value="ALL">Tüm Öğrenciler</option>
-              {students.map(st => (
-                <option key={st.id} value={st.id}>{st.name}</option>
+              <option value="ALL">Tüm Ders Değişkenleri</option>
+              {subjects.map(subj => (
+                <option key={subj} value={subj}>
+                  {subj}
+                </option>
               ))}
             </select>
-          )}
+
+            {role === 'teacher' && (
+              <select
+                value={filterStudentId}
+                onChange={e => setFilterStudentId(e.target.value)}
+                className="px-3 py-1.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 text-xs font-bold"
+              >
+                <option value="ALL">Tüm Öğrenciler</option>
+                {students.map(st => (
+                  <option key={st.id} value={st.id}>{st.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
         </div>
 
         {filteredFocusSessions.length === 0 ? (
           <div className="py-8 text-center text-xs text-neutral-400">
-            Henüz odak kaydı yok.
+            Henüz odak veya soru kaydı bulunmuyor.
           </div>
         ) : (
-          <div className="space-y-2.5">
-            {filteredFocusSessions.map(session => (
-              <div
-                key={session.id}
-                className="p-3.5 rounded-xl bg-neutral-50 dark:bg-neutral-900/40 border border-black/5 dark:border-white/5 space-y-2"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <span className="font-bold text-xs text-neutral-900 dark:text-white mr-2">
-                      {session.studentName}
-                    </span>
-                    <span className="text-xs text-blue-600 dark:text-blue-400 font-semibold">
-                      {session.subject} — {session.topic}
-                    </span>
-                  </div>
+          <div className="divide-y divide-black/5 dark:divide-white/5">
+            {filteredFocusSessions.map(sess => {
+              const canonicalSubj = normalizeSubjectName(sess.subject);
+              const qTotal = sess.solvedQuestions
+                ? sess.solvedQuestions.correct + sess.solvedQuestions.wrong + sess.solvedQuestions.blank
+                : 0;
+              return (
+                <div key={sess.id} className="py-3.5 first:pt-0 last:pb-0 space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <span className="font-bold text-xs text-neutral-900 dark:text-white">
+                        {sess.studentName}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[11px] font-bold">
+                        {canonicalSubj}
+                      </span>
+                      <span className="text-xs text-neutral-600 dark:text-neutral-300 font-medium">
+                        {sess.topic}
+                      </span>
+                    </div>
 
-                  <div className="text-right font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                    {session.durationMinutes} dk
-                  </div>
-                </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="px-2.5 py-0.5 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 font-mono font-bold text-xs">
+                        {sess.durationMinutes} Dk
+                      </span>
+                      {sess.solvedQuestions && (
+                        <span className="px-2.5 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-xs">
+                          {qTotal} Soru • {sess.solvedQuestions.correct}D/{sess.solvedQuestions.wrong}Y/{sess.solvedQuestions.blank}B ({sess.solvedQuestions.net} Net)
+                        </span>
+                      )}
+                      <span className="text-[11px] text-neutral-400 font-mono">
+                        {new Date(sess.completedAt).toLocaleString('tr-TR', {
+                          day: 'numeric',
+                          month: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </span>
 
-                {session.solvedQuestions && (
-                  <div className="inline-flex items-center gap-2 text-xs font-mono text-neutral-600 dark:text-neutral-300">
-                    <span className="text-emerald-600 font-bold">D:{session.solvedQuestions.correct}</span>
-                    <span className="text-rose-500 font-bold">Y:{session.solvedQuestions.wrong}</span>
-                    <span className="text-neutral-400">B:{session.solvedQuestions.blank}</span>
-                    <span className="text-blue-600 font-bold">Net:{session.solvedQuestions.net}</span>
-                  </div>
-                )}
-
-                {session.studentNote && (
-                  <p className="text-xs text-neutral-500">{session.studentNote}</p>
-                )}
-
-                {session.teacherFeedback ? (
-                  <div className="p-2 rounded-lg bg-indigo-500/10 text-xs text-indigo-700 dark:text-indigo-300">
-                    <strong>Not:</strong> {session.teacherFeedback}
-                  </div>
-                ) : role === 'teacher' ? (
-                  <div>
-                    {activeFeedbackSessionId === session.id ? (
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={feedbackText}
-                          onChange={e => setFeedbackText(e.target.value)}
-                          placeholder="Not yazın..."
-                          className="flex-1 p-1.5 rounded-lg text-xs bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10"
-                        />
+                      {/* Düzenle ve Sil Butonları */}
+                      <div className="flex items-center gap-1 ml-1">
                         <button
-                          onClick={() => handleSendTeacherFeedback(session.id)}
-                          className="px-2.5 py-1.5 rounded-lg bg-indigo-600 text-white font-bold text-xs cursor-pointer"
+                          type="button"
+                          onClick={() => handleOpenEditModal(sess)}
+                          className="px-2 py-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-blue-500/15 text-neutral-600 dark:text-neutral-300 hover:text-blue-600 dark:hover:text-blue-400 text-[11px] font-bold inline-flex items-center gap-1 transition-colors cursor-pointer"
+                          title="Soru / Odak Kaydını Düzenle"
                         >
-                          Gönder
+                          <Edit2 className="w-3 h-3" />
+                          <span>Düzenle</span>
                         </button>
+
+                        {confirmDeleteId === sess.id ? (
+                          <div className="inline-flex items-center gap-1 bg-rose-500/10 px-2 py-0.5 rounded-lg border border-rose-500/30">
+                            <button
+                              type="button"
+                              onClick={() => handleConfirmDeleteSession(sess.id)}
+                              className="text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+                            >
+                              Sil
+                            </button>
+                            <span className="text-neutral-300 dark:text-neutral-600">|</span>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(null)}
+                              className="text-[11px] font-semibold text-neutral-500 hover:text-neutral-800 dark:hover:text-white cursor-pointer"
+                            >
+                              Vazgeç
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(sess.id)}
+                            className="p-1.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-rose-500/15 text-neutral-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer"
+                            title="Kaydı Sil"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          setActiveFeedbackSessionId(session.id);
-                          setFeedbackText('');
-                        }}
-                        className="text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold inline-flex items-center gap-1 cursor-pointer"
-                      >
-                        <MessageSquare className="w-3 h-3" />
-                        <span>Not Ekle</span>
-                      </button>
-                    )}
+                    </div>
                   </div>
-                ) : null}
-              </div>
-            ))}
+
+                  {sess.studentNote && (
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                      Not: "{sess.studentNote}"
+                    </p>
+                  )}
+
+                  {sess.teacherFeedback ? (
+                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300">
+                      <span className="font-bold">Öğretmen Yorumu: </span>
+                      {sess.teacherFeedback}
+                    </div>
+                  ) : (
+                    role === 'teacher' && (
+                      <div>
+                        {activeFeedbackSessionId === sess.id ? (
+                          <div className="flex items-center gap-2 mt-1">
+                            <input
+                              type="text"
+                              value={feedbackText}
+                              onChange={e => setFeedbackText(e.target.value)}
+                              placeholder="Yorum yazın..."
+                              className="flex-1 p-2 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-xs"
+                            />
+                            <button
+                              onClick={() => handleSendTeacherFeedback(sess.id)}
+                              className="px-3 py-2 rounded-xl bg-blue-500 text-white font-bold text-xs cursor-pointer"
+                            >
+                              Gönder
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setActiveFeedbackSessionId(sess.id)}
+                            className="text-[11px] font-bold text-blue-500 hover:underline flex items-center gap-1 cursor-pointer"
+                          >
+                            <MessageSquare className="w-3 h-3" />
+                            <span>Yorum Yaz</span>
+                          </button>
+                        )}
+                      </div>
+                    )
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

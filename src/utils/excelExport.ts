@@ -306,7 +306,7 @@ export function exportTrialExamsToExcel(exams: TrialExam[], student: Student) {
 
   const errorRows: Array<Record<string, string | number>> = [];
   exams.forEach(exam => {
-    exam.errors.forEach((err, idx) => {
+    (exam.errors || []).forEach((err, idx) => {
       errorRows.push({
         'Deneme': exam.title,
         'Tarih': exam.date,
