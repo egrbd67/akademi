@@ -669,14 +669,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [rawFocusSessions, role, currentStudent?.id, activeTeacherId, studentIdsSet]);
 
   const activities = useMemo(() => {
-    if (role === 'student') {
-      if (!currentStudent?.id) return [];
-      return rawActivities.filter(a => a.studentId === currentStudent.id);
+    const scoped = role === 'student'
+      ? (!currentStudent?.id ? [] : rawActivities.filter(a => a.studentId === currentStudent.id))
+      : (!activeTeacherId ? [] : rawActivities.filter(a => studentIdsSet.has(a.studentId) && (!a.teacherUid || a.teacherUid === activeTeacherId)));
+
+    // Ensure 'joined_class' notification only appears once (the first time) per student
+    const earliestJoinIdByStudent = new Map<string, string>();
+    for (let i = scoped.length - 1; i >= 0; i--) {
+      const item = scoped[i];
+      if (item.type === 'joined_class' && !earliestJoinIdByStudent.has(item.studentId)) {
+        earliestJoinIdByStudent.set(item.studentId, item.id);
+      }
     }
-    if (!activeTeacherId) return [];
-    return rawActivities.filter(
-      a => studentIdsSet.has(a.studentId) && (!a.teacherUid || a.teacherUid === activeTeacherId)
-    );
+
+    return scoped.filter(item => {
+      if (item.type !== 'joined_class') return true;
+      return earliestJoinIdByStudent.get(item.studentId) === item.id;
+    });
   }, [rawActivities, role, currentStudent?.id, activeTeacherId, studentIdsSet]);
 
   const announcements = useMemo(() => {
@@ -925,16 +934,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Ensure student is in classroom and linked to classroom's teacherUid
     const curClasses = matched.classroomIds || [];
+    const curJoinedClasses = matched.joinedClassIds || [];
+    const alreadyHasJoinActivity = rawActivities.some(
+      a => a.studentId === matched.id && a.type === 'joined_class'
+    );
+    const isFirstTimeJoining = !curJoinedClasses.includes(classroom.id) && !alreadyHasJoinActivity;
+
     const updatedStudent: Student = {
       ...matched,
       teacherUid: matched.teacherUid || classroom.teacherUid,
-      classroomIds: curClasses.includes(classroom.id) ? curClasses : [...curClasses, classroom.id]
+      classroomIds: curClasses.includes(classroom.id) ? curClasses : [...curClasses, classroom.id],
+      joinedClassIds: curJoinedClasses.includes(classroom.id) ? curJoinedClasses : [...curJoinedClasses, classroom.id],
+      lastActiveAt: new Date().toISOString()
     };
 
-    if (!curClasses.includes(classroom.id) || (!matched.teacherUid && classroom.teacherUid)) {
+    if (
+      !curClasses.includes(classroom.id) ||
+      !curJoinedClasses.includes(classroom.id) ||
+      (!matched.teacherUid && classroom.teacherUid)
+    ) {
       await updateStudentInFirestore(matched.id, {
         classroomIds: updatedStudent.classroomIds,
-        teacherUid: updatedStudent.teacherUid
+        joinedClassIds: updatedStudent.joinedClassIds,
+        teacherUid: updatedStudent.teacherUid,
+        lastActiveAt: updatedStudent.lastActiveAt
       });
     }
 
@@ -945,18 +968,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (typeof matched.themeConfig.isDarkMode === 'boolean') setIsDarkMode(matched.themeConfig.isDarkMode);
     }
 
-    // Log student activity
-    const activityId = `act_${Date.now()}`;
-    await saveActivityLogToFirestore({
-      id: activityId,
-      studentId: matched.id,
-      studentName: matched.name,
-      teacherUid: updatedStudent.teacherUid || classroom.teacherUid,
-      type: 'joined_class',
-      title: 'Sınıfa Katıldı',
-      detail: `${matched.name}, "${classroom.name}" sınıfına başarıyla giriş yaptı.`,
-      timestamp: new Date().toISOString()
-    });
+    // Only log "Sınıfa Katıldı" the very first time the student joins
+    if (isFirstTimeJoining) {
+      const activityId = `act_${Date.now()}`;
+      const joinLog: ActivityLog = {
+        id: activityId,
+        studentId: matched.id,
+        studentName: matched.name,
+        teacherUid: updatedStudent.teacherUid || classroom.teacherUid,
+        type: 'joined_class',
+        title: 'Sınıfa Katıldı',
+        detail: `${matched.name}, "${classroom.name}" sınıfına ilk kez katıldı.`,
+        timestamp: new Date().toISOString()
+      };
+      setRawActivities(prev => [joinLog, ...prev]);
+      await saveActivityLogToFirestore(joinLog);
+    }
 
     if (auth.currentUser) {
       try {
@@ -973,7 +1000,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(`${STORAGE_PREFIX}student_session`, JSON.stringify(updatedStudent));
 
     return { success: true, student: updatedStudent };
-  }, [rawClassrooms, rawStudents]);
+  }, [rawClassrooms, rawStudents, rawActivities]);
 
   // Logout (Immediately clears session state & signs out of Firebase)
   const logout = useCallback(async () => {

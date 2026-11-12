@@ -25,6 +25,7 @@ export interface Student {
   phone: string;
   notes: string;
   classroomIds?: string[]; // Birden fazla sınıfta bulunabilir
+  joinedClassIds?: string[]; // İlk kez giriş bildirimi gönderilen sınıflar
   themeConfig?: {
     bgTheme: BackgroundTheme;
     boxTheme: BoxColorTheme;

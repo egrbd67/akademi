@@ -33,6 +33,7 @@ import {
 import { useApp } from '../../context/AppContext';
 import { Student, ScheduleItem, Homework, TrialExam, ExamType } from '../../types';
 import { ClassroomsModal } from '../classrooms/ClassroomsModal';
+import { TeacherStudyTrackerView } from '../students/TeacherStudyTrackerView';
 import { getThemeStyles } from '../theme/ThemeCustomizerModal';
 
 interface UserManagementPanelProps {
@@ -67,8 +68,9 @@ export const UserManagementPanel: React.FC<UserManagementPanelProps> = ({ onNavi
   const themeStyles = getThemeStyles(boxTheme);
   const todayStr = new Date().toISOString().split('T')[0];
 
-  // View mode: Grid Cards vs List View vs Ranking Table vs Real-Time Audit Feed
-  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'ranking' | 'activities'>('grid');
+  // View mode: Grid Cards vs List View vs Ranking Table vs Real-Time Audit Feed vs Study Tracker
+  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'ranking' | 'activities' | 'study_tracker'>('grid');
+  const [trackerStudentId, setTrackerStudentId] = useState<string>('ALL');
   const [rankingSort, setRankingSort] = useState<'score' | 'questions' | 'duration' | 'streak' | 'name'>('score');
   const [activityTypeFilter, setActivityTypeFilter] = useState<string>('ALL');
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -433,6 +435,21 @@ export const UserManagementPanel: React.FC<UserManagementPanelProps> = ({ onNavi
           </button>
 
           <button
+            onClick={() => {
+              setTrackerStudentId('ALL');
+              setViewMode('study_tracker');
+            }}
+            className={`flex-1 md:flex-initial px-3.5 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              viewMode === 'study_tracker'
+                ? 'bg-white dark:bg-[#2C2C2E] text-blue-600 dark:text-blue-400 shadow-xs'
+                : 'text-neutral-500 hover:text-neutral-900 dark:hover:text-white'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5 text-blue-500" />
+            <span>Bugün & 1 Hafta Takip</span>
+          </button>
+
+          <button
             onClick={() => setViewMode('activities')}
             className={`flex-1 md:flex-initial px-3.5 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
               viewMode === 'activities'
@@ -445,6 +462,10 @@ export const UserManagementPanel: React.FC<UserManagementPanelProps> = ({ onNavi
           </button>
         </div>
       </div>
+
+      {viewMode === 'study_tracker' && (
+        <TeacherStudyTrackerView initialStudentId={trackerStudentId} compact />
+      )}
 
       {/* Search Bar & Filter Chips */}
       <div className="space-y-3">
@@ -1393,6 +1414,19 @@ export const UserManagementPanel: React.FC<UserManagementPanelProps> = ({ onNavi
                     >
                       <BarChart3 className="w-3 h-3 text-purple-500" />
                       <span>Deneme Gir</span>
+                    </button>
+                  </div>
+
+                  <div className="pt-1.5">
+                    <button
+                      onClick={() => {
+                        setTrackerStudentId(st.id);
+                        setViewMode('study_tracker');
+                      }}
+                      className="w-full py-2 px-3 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>Bugün & 1 Hafta Önceki Çalışmalarını Gör</span>
                     </button>
                   </div>
 

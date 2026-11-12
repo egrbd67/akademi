@@ -11,6 +11,7 @@ import {
   X
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { TeacherStudyTrackerView } from '../students/TeacherStudyTrackerView';
 
 export const StreakView: React.FC = () => {
   const {
@@ -263,6 +264,11 @@ export const StreakView: React.FC = () => {
             </div>
           )}
         </div>
+      )}
+
+      {/* ÖĞRETMEN İÇİN O GÜN & 1 HAFTA ÖNCEKİ ÇALIŞMA TAKİBİ */}
+      {role === 'teacher' && (
+        <TeacherStudyTrackerView compact />
       )}
 
       {/* GÜNLÜK AKTİVİTELER */}

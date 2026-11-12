@@ -15,6 +15,7 @@ import { HomeworkView } from './components/homework/HomeworkView';
 import { StreakView } from './components/streak/StreakView';
 import { UserManagementPanel } from './components/users/UserManagementPanel';
 import { StudentsManagerView } from './components/students/StudentsManagerView';
+import { TeacherStudyTrackerView } from './components/students/TeacherStudyTrackerView';
 import { StudentProfileView } from './components/profile/StudentProfileView';
 import { AnnouncementsView } from './components/announcements/AnnouncementsView';
 import { FocusModeView } from './components/focus/FocusModeView';
@@ -71,7 +72,7 @@ function MainApp() {
 
   // Student role isolation: redirect away from coach-only user & classrooms panel
   React.useEffect(() => {
-    if (role === 'student' && (activeTab === 'users' || activeTab === 'students' || activeTab === 'classrooms')) {
+    if (role === 'student' && (activeTab === 'users' || activeTab === 'students' || activeTab === 'classrooms' || activeTab === 'study_tracker')) {
       setActiveTab('schedule');
     }
   }, [role, activeTab]);
@@ -156,6 +157,7 @@ function MainApp() {
           {activeTab === 'users' && (
             <UserManagementPanel onNavigateTab={tab => setActiveTab(tab)} />
           )}
+          {activeTab === 'study_tracker' && <TeacherStudyTrackerView />}
           {activeTab === 'classrooms' && <ClassroomsView />}
           {activeTab === 'schedule' && <ScheduleView onNavigateTab={tab => setActiveTab(tab)} />}
           {activeTab === 'focus' && <FocusModeView />}

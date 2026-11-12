@@ -4,10 +4,10 @@ import {
   CheckSquare,
   Flame,
   Users,
-  User,
   Megaphone,
   Zap,
-  Layers
+  Layers,
+  Clock
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { getThemeStyles } from '../theme/ThemeCustomizerModal';
@@ -28,6 +28,11 @@ export const TabBar: React.FC<TabBarProps> = ({ activeTab, setActiveTab }) => {
             id: 'users',
             label: 'Öğrenciler',
             icon: Users,
+          },
+          {
+            id: 'study_tracker',
+            label: 'Takip',
+            icon: Clock,
           },
           {
             id: 'classrooms',

@@ -46,6 +46,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
             badge: `${students.length}`,
           },
           {
+            id: 'study_tracker',
+            label: 'Günlük & 1 Hafta Takip',
+            icon: Clock,
+            badge: '7 Gün',
+          },
+          {
             id: 'classrooms',
             label: 'Sınıflar & Öğretmenler',
             icon: Layers,
