@@ -18,6 +18,8 @@ export const QuestionEntrySheet: React.FC = () => {
 
   const [subject, setSubject] = useState<string>('');
   const [topic, setTopic] = useState<string>('');
+  const [durationMinutes, setDurationMinutes] = useState<number>(25);
+  const [studentNote, setStudentNote] = useState<string>('');
   const [correct, setCorrect] = useState<number>(30);
   const [wrong, setWrong] = useState<number>(3);
   const [blank, setBlank] = useState<number>(1);
@@ -26,6 +28,8 @@ export const QuestionEntrySheet: React.FC = () => {
     if (questionEntryModal) {
       setSubject(questionEntryModal.subject || 'Matematik');
       setTopic(questionEntryModal.topic || 'Konu Çalışması');
+      setDurationMinutes(Math.max(1, questionEntryModal.durationMinutes || 25));
+      setStudentNote('');
     }
   }, [questionEntryModal]);
 
@@ -51,7 +55,9 @@ export const QuestionEntrySheet: React.FC = () => {
         net,
       },
       subject,
-      topic
+      topic,
+      studentNote,
+      Math.max(1, Number(durationMinutes) || 1)
     );
   };
 
@@ -72,7 +78,7 @@ export const QuestionEntrySheet: React.FC = () => {
                 Çalışmayı Bitir & Gönder
               </h3>
               <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                Saat {nowTime} • {questionEntryModal.durationMinutes} dk çalışma
+                Saat {nowTime} • {durationMinutes} dk çalışma
               </p>
             </div>
           </div>
@@ -114,6 +120,47 @@ export const QuestionEntrySheet: React.FC = () => {
                 className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 text-xs font-bold text-neutral-900 dark:text-white"
                 required
               />
+            </div>
+          </div>
+
+          {/* Çalışma Süresi (Dakika) Giriş Alanı */}
+          <div className="p-3 rounded-2xl bg-blue-500/5 border border-blue-500/20 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-blue-500 shrink-0" />
+              <div>
+                <span className="text-xs font-bold text-neutral-900 dark:text-white block">
+                  Çalışma Süresi (Dakika)
+                </span>
+                <span className="text-[11px] text-neutral-500">
+                  Öğretmene gönderilecek süre
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setDurationMinutes(prev => Math.max(1, (Number(prev) || 1) - 5))}
+                className="px-2.5 py-1.5 rounded-lg bg-neutral-200/80 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 text-xs font-bold font-mono cursor-pointer hover:opacity-80"
+              >
+                -5
+              </button>
+              <input
+                type="number"
+                min={1}
+                max={720}
+                value={durationMinutes}
+                onChange={e => setDurationMinutes(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                className="w-20 p-2 rounded-xl bg-white dark:bg-neutral-900 border border-black/10 dark:border-white/15 text-center font-extrabold font-mono text-sm text-blue-600 dark:text-blue-400 focus:outline-none"
+                required
+              />
+              <span className="text-xs font-bold text-neutral-500">dk</span>
+              <button
+                type="button"
+                onClick={() => setDurationMinutes(prev => Math.min(720, (Number(prev) || 0) + 5))}
+                className="px-2.5 py-1.5 rounded-lg bg-neutral-200/80 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 text-xs font-bold font-mono cursor-pointer hover:opacity-80"
+              >
+                +5
+              </button>
             </div>
           </div>
 

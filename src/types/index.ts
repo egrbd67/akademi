@@ -263,6 +263,8 @@ export interface ActiveTimerSession {
   mode: 'stopwatch' | 'pomodoro';
   initialDurationMinutes: number; // for Pomodoro
   elapsedSeconds: number;
+  accumulatedSecondsBeforeRun?: number; // Real-world seconds accumulated before current running segment
+  lastResumedAtMs?: number; // Exact Date.now() wall-clock ms when timer started/resumed
   isRunning: boolean;
   isMinimized: boolean;
   isPopupHidden?: boolean;

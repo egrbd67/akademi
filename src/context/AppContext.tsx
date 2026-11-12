@@ -184,7 +184,13 @@ interface AppContextType {
   // Question Entry Sheet
   questionEntryModal: QuestionEntryState | null;
   closeQuestionEntryModal: () => void;
-  submitQuestionEntry: (results: SolvedQuestions, customSubject?: string, customTopic?: string, studentNote?: string) => void;
+  submitQuestionEntry: (
+    results: SolvedQuestions,
+    customSubject?: string,
+    customTopic?: string,
+    studentNote?: string,
+    customDurationMinutes?: number
+  ) => void;
 
   // Streaks & Recovery
   incrementStreakForStudent: (studentId: string) => void;
@@ -336,10 +342,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(`${STORAGE_PREFIX}has_completed_intro`, completed ? 'true' : 'false');
   }, []);
 
-  // Timer & Question entry
-  const [activeTimer, setActiveTimer] = useState<ActiveTimerSession | null>(null);
+  // Timer & Question entry (persisted with real wall-clock timestamps so backgrounding or refreshing never loses time)
+  const [activeTimer, setActiveTimer] = useState<ActiveTimerSession | null>(() => {
+    try {
+      const raw = localStorage.getItem(`${STORAGE_PREFIX}active_timer`);
+      if (!raw) return null;
+      const parsed: ActiveTimerSession = JSON.parse(raw);
+      if (parsed && parsed.isRunning && parsed.lastResumedAtMs) {
+        const baseSec = parsed.accumulatedSecondsBeforeRun ?? 0;
+        const deltaSec = Math.max(0, Math.floor((Date.now() - parsed.lastResumedAtMs) / 1000));
+        const totalSec = baseSec + deltaSec;
+        const maxPomodoroSec = (parsed.initialDurationMinutes || 25) * 60;
+        if (parsed.mode === 'pomodoro' && totalSec >= maxPomodoroSec) {
+          return {
+            ...parsed,
+            elapsedSeconds: maxPomodoroSec,
+            accumulatedSecondsBeforeRun: maxPomodoroSec,
+            lastResumedAtMs: undefined,
+            isRunning: false
+          };
+        }
+        return {
+          ...parsed,
+          elapsedSeconds: totalSec
+        };
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  });
   const [isTimerModalOpen, setIsTimerModalOpen] = useState(false);
   const [questionEntryModal, setQuestionEntryModal] = useState<QuestionEntryState | null>(null);
+
+  // Sync activeTimer to localStorage so real-clock state survives tab suspension
+  useEffect(() => {
+    try {
+      if (activeTimer) {
+        localStorage.setItem(`${STORAGE_PREFIX}active_timer`, JSON.stringify(activeTimer));
+      } else {
+        localStorage.removeItem(`${STORAGE_PREFIX}active_timer`);
+      }
+    } catch {}
+  }, [activeTimer]);
 
   // Initialize Dark Mode in DOM
   useEffect(() => {
@@ -351,28 +396,87 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(`${STORAGE_PREFIX}dark_mode`, isDarkMode ? 'true' : 'false');
   }, [isDarkMode]);
 
-  // Global background timer interval (continues counting across all tabs and even when popup is hidden)
+  // Global real wall-clock timer (uses Date.now() + unthrottled Web Worker + visibilitychange so background tabs never pause or drift)
   useEffect(() => {
     if (!activeTimer?.isRunning) return;
-    const interval = setInterval(() => {
+
+    const syncWithWallClock = () => {
       setActiveTimer(prev => {
         if (!prev || !prev.isRunning) return prev;
-        const nextElapsed = prev.elapsedSeconds + 1;
-        if (prev.mode === 'pomodoro' && nextElapsed >= (prev.initialDurationMinutes || 25) * 60) {
+        const baseSec = prev.accumulatedSecondsBeforeRun ?? prev.elapsedSeconds ?? 0;
+        const resumedMs = prev.lastResumedAtMs ?? Date.now();
+        const deltaSec = Math.max(0, Math.floor((Date.now() - resumedMs) / 1000));
+        const nextElapsed = baseSec + deltaSec;
+        const targetSec = (prev.initialDurationMinutes || 25) * 60;
+
+        if (prev.mode === 'pomodoro' && nextElapsed >= targetSec) {
           playFocusFinishSound();
           return {
             ...prev,
-            elapsedSeconds: (prev.initialDurationMinutes || 25) * 60,
+            elapsedSeconds: targetSec,
+            accumulatedSecondsBeforeRun: targetSec,
+            lastResumedAtMs: undefined,
             isRunning: false
           };
         }
+
+        if (nextElapsed === prev.elapsedSeconds && prev.lastResumedAtMs) {
+          return prev;
+        }
+
         return {
           ...prev,
+          accumulatedSecondsBeforeRun: baseSec,
+          lastResumedAtMs: resumedMs,
           elapsedSeconds: nextElapsed
         };
       });
-    }, 1000);
-    return () => clearInterval(interval);
+    };
+
+    // Immediate sync
+    syncWithWallClock();
+
+    // 1. Standard interval for foreground smoothness
+    const interval = setInterval(syncWithWallClock, 250);
+
+    // 2. Inline Web Worker so backgrounded tabs still tick on time without browser throttling
+    let worker: Worker | null = null;
+    let workerBlobUrl: string | null = null;
+    try {
+      const blob = new Blob(
+        ['const id = setInterval(() => postMessage("tick"), 500); onmessage = (e) => { if (e.data === "stop") clearInterval(id); };'],
+        { type: 'application/javascript' }
+      );
+      workerBlobUrl = URL.createObjectURL(blob);
+      worker = new Worker(workerBlobUrl);
+      worker.onmessage = () => syncWithWallClock();
+    } catch {
+      // Fallback to interval + visibilitychange if Worker is restricted
+    }
+
+    // 3. Instant resync when returning to tab or window
+    const handleVisibilityOrFocus = () => {
+      syncWithWallClock();
+    };
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    window.addEventListener('pageshow', handleVisibilityOrFocus);
+
+    return () => {
+      clearInterval(interval);
+      if (worker) {
+        try {
+          worker.postMessage('stop');
+          worker.terminate();
+        } catch {}
+      }
+      if (workerBlobUrl) {
+        URL.revokeObjectURL(workerBlobUrl);
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      window.removeEventListener('pageshow', handleVisibilityOrFocus);
+    };
   }, [activeTimer?.isRunning]);
 
 
@@ -1423,7 +1527,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setNotifications([]);
   }, []);
 
-  // Timer handlers
+  // Timer handlers (Strictly anchored to real clock Date.now())
   const startTimer = useCallback((params: {
     scheduleItemId?: string;
     homeworkId?: string;
@@ -1434,6 +1538,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     openModal?: boolean;
     autoStart?: boolean;
   }) => {
+    const shouldRun = params.autoStart !== false;
+    const nowMs = Date.now();
     setActiveTimer({
       scheduleItemId: params.scheduleItemId,
       homeworkId: params.homeworkId,
@@ -1443,24 +1549,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       mode: params.mode || 'stopwatch',
       initialDurationMinutes: params.initialMinutes || 25,
       elapsedSeconds: 0,
-      isRunning: params.autoStart !== false,
+      accumulatedSecondsBeforeRun: 0,
+      lastResumedAtMs: shouldRun ? nowMs : undefined,
+      isRunning: shouldRun,
       isMinimized: !params.openModal,
       isPopupHidden: false,
-      startedAt: new Date().toISOString()
+      startedAt: new Date(nowMs).toISOString()
     });
     setIsTimerModalOpen(Boolean(params.openModal));
   }, [currentStudent]);
 
   const pauseTimer = useCallback(() => {
-    setActiveTimer(prev => prev ? { ...prev, isRunning: false } : null);
+    setActiveTimer(prev => {
+      if (!prev) return null;
+      if (!prev.isRunning) return prev;
+      const baseSec = prev.accumulatedSecondsBeforeRun ?? prev.elapsedSeconds ?? 0;
+      const deltaSec = prev.lastResumedAtMs
+        ? Math.max(0, Math.floor((Date.now() - prev.lastResumedAtMs) / 1000))
+        : 0;
+      const exactElapsed = baseSec + deltaSec;
+      return {
+        ...prev,
+        elapsedSeconds: exactElapsed,
+        accumulatedSecondsBeforeRun: exactElapsed,
+        lastResumedAtMs: undefined,
+        isRunning: false
+      };
+    });
   }, []);
 
   const resumeTimer = useCallback(() => {
-    setActiveTimer(prev => prev ? { ...prev, isRunning: true } : null);
+    setActiveTimer(prev => {
+      if (!prev) return null;
+      if (prev.isRunning) return prev;
+      const currentElapsed = prev.elapsedSeconds || 0;
+      return {
+        ...prev,
+        accumulatedSecondsBeforeRun: currentElapsed,
+        lastResumedAtMs: Date.now(),
+        isRunning: true
+      };
+    });
   }, []);
 
   const resetTimer = useCallback(() => {
-    setActiveTimer(prev => prev ? { ...prev, elapsedSeconds: 0, isRunning: false } : null);
+    setActiveTimer(prev => prev ? {
+      ...prev,
+      elapsedSeconds: 0,
+      accumulatedSecondsBeforeRun: 0,
+      lastResumedAtMs: undefined,
+      isRunning: false
+    } : null);
   }, []);
 
   const minimizeTimer = useCallback(() => {
@@ -1483,13 +1622,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const updateTimerState = useCallback((updates: Partial<ActiveTimerSession>) => {
-    setActiveTimer(prev => prev ? { ...prev, ...updates } : null);
+    setActiveTimer(prev => {
+      if (!prev) return null;
+      const next = { ...prev, ...updates };
+      if (updates.elapsedSeconds !== undefined) {
+        next.accumulatedSecondsBeforeRun = updates.elapsedSeconds;
+        next.lastResumedAtMs = next.isRunning ? Date.now() : undefined;
+      }
+      return next;
+    });
   }, []);
 
   const finishTimer = useCallback(() => {
     if (!activeTimer) return;
     playFocusFinishSound();
-    const durationMinutes = Math.max(1, Math.round(activeTimer.elapsedSeconds / 60));
+    const baseSec = activeTimer.accumulatedSecondsBeforeRun ?? activeTimer.elapsedSeconds ?? 0;
+    const deltaSec = activeTimer.isRunning && activeTimer.lastResumedAtMs
+      ? Math.max(0, Math.floor((Date.now() - activeTimer.lastResumedAtMs) / 1000))
+      : 0;
+    const finalElapsedSeconds = activeTimer.isRunning ? (baseSec + deltaSec) : activeTimer.elapsedSeconds;
+    const durationMinutes = Math.max(1, Math.round(finalElapsedSeconds / 60));
 
     // Open question entry sheet
     setQuestionEntryModal({
@@ -1497,7 +1649,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       scheduleItemId: activeTimer.scheduleItemId,
       homeworkId: activeTimer.homeworkId,
       durationMinutes,
-      durationSeconds: activeTimer.elapsedSeconds,
+      durationSeconds: finalElapsedSeconds,
       mode: activeTimer.mode,
       subject: activeTimer.subject,
       topic: activeTimer.topic
@@ -1521,20 +1673,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     results: SolvedQuestions,
     customSubject?: string,
     customTopic?: string,
-    studentNote?: string
+    studentNote?: string,
+    customDurationMinutes?: number
   ) => {
     const targetSt = currentStudent || students[0];
     if (!questionEntryModal || !targetSt) return;
 
     const finalSubject = customSubject?.trim() || questionEntryModal.subject;
     const finalTopic = customTopic?.trim() || questionEntryModal.topic;
+    const finalDurationMinutes = Math.max(
+      1,
+      typeof customDurationMinutes === 'number' && !Number.isNaN(customDurationMinutes) && customDurationMinutes > 0
+        ? Math.round(customDurationMinutes)
+        : questionEntryModal.durationMinutes
+    );
 
     // Update schedule item if linked
     if (questionEntryModal.scheduleItemId) {
       await updateScheduleItem(questionEntryModal.scheduleItemId, {
         subject: finalSubject,
         topic: finalTopic,
-        actualDurationMinutes: questionEntryModal.durationMinutes,
+        actualDurationMinutes: finalDurationMinutes,
         solvedQuestions: results,
         status: 'completed'
       });
@@ -1558,8 +1717,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       teacherUid: targetSt.teacherUid,
       subject: finalSubject,
       topic: finalTopic,
-      durationMinutes: questionEntryModal.durationMinutes,
-      durationSeconds: questionEntryModal.durationSeconds ?? questionEntryModal.durationMinutes * 60,
+      durationMinutes: finalDurationMinutes,
+      durationSeconds: finalDurationMinutes * 60,
       mode: questionEntryModal.mode || 'stopwatch',
       solvedQuestions: results,
       studentNote: studentNote?.trim() || undefined,

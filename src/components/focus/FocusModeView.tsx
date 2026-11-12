@@ -49,6 +49,7 @@ export const FocusModeView: React.FC = () => {
   const [selectedTopic, setSelectedTopic] = useState<string>(activeTimer?.topic || 'Konu Çalışması');
 
   const [isReportModalOpen, setIsReportModalOpen] = useState<boolean>(false);
+  const [manualDurationMinutes, setManualDurationMinutes] = useState<number>(25);
   const [studentNote, setStudentNote] = useState<string>('');
   const [solvedCorrect, setSolvedCorrect] = useState<number>(0);
   const [solvedWrong, setSolvedWrong] = useState<number>(0);
@@ -150,6 +151,10 @@ export const FocusModeView: React.FC = () => {
     if (activeTimer?.isRunning) {
       pauseTimer();
     }
+    const defaultMins = elapsedSeconds > 0
+      ? Math.max(1, Math.round(elapsedSeconds / 60))
+      : Math.max(1, targetMinutes || 25);
+    setManualDurationMinutes(defaultMins);
     setIsReportModalOpen(true);
   };
 
@@ -160,7 +165,7 @@ export const FocusModeView: React.FC = () => {
 
     const finalSubject = selectedSubject.trim() || 'Genel Çalışma';
     const finalTopic = selectedTopic.trim() || 'Konu Çalışması';
-    const durationMins = Math.max(1, Math.round(elapsedSeconds / 60));
+    const durationMins = Math.max(1, Math.round(Number(manualDurationMinutes) || 1));
 
     const net = Number(Math.max(0, solvedCorrect - solvedWrong / 4).toFixed(2));
     const questions: SolvedQuestions = {
@@ -176,7 +181,7 @@ export const FocusModeView: React.FC = () => {
       subject: finalSubject,
       topic: finalTopic,
       durationMinutes: durationMins,
-      durationSeconds: elapsedSeconds,
+      durationSeconds: durationMins * 60,
       mode,
       solvedQuestions: questions,
       studentNote: studentNote.trim() || undefined,
@@ -507,11 +512,11 @@ export const FocusModeView: React.FC = () => {
               <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
               <div>
                 <h3 className="text-base font-bold text-neutral-900 dark:text-white">
-                  Çalışmayı Kaydet
+                  Çalışmayı Kaydet & Öğretmene Gönder
                 </h3>
                 <p className="text-xs text-neutral-500">
-                  Süre: {Math.max(1, Math.round(elapsedSeconds / 60))} dk
-                  {elapsedSeconds >= 300 && !isStreakEarnedToday ? ' • +1 Seri' : ''}
+                  Çalıştığınız süreyi ve çözdüğünüz soruları aşağıdan girebilirsiniz
+                  {manualDurationMinutes >= 5 && !isStreakEarnedToday ? ' • +1 Seri' : ''}
                 </p>
               </div>
             </div>
@@ -537,6 +542,44 @@ export const FocusModeView: React.FC = () => {
                     className="w-full p-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-black/5 dark:border-white/5 font-bold text-neutral-900 dark:text-white"
                     required
                   />
+                </div>
+              </div>
+
+              {/* Çalışma Süresi (Dakika) Giriş Alanı */}
+              <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 flex items-center justify-between gap-3">
+                <div>
+                  <label className="block font-bold text-neutral-900 dark:text-white">
+                    Çalışma Süresi (Dakika)
+                  </label>
+                  <span className="text-[11px] text-neutral-500">
+                    Öğretmene gönderilecek odak süresi
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setManualDurationMinutes(prev => Math.max(1, (Number(prev) || 1) - 5))}
+                    className="px-2.5 py-1.5 rounded-lg bg-neutral-200/80 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 font-bold font-mono cursor-pointer hover:opacity-80"
+                  >
+                    -5
+                  </button>
+                  <input
+                    type="number"
+                    min={1}
+                    max={720}
+                    value={manualDurationMinutes}
+                    onChange={e => setManualDurationMinutes(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    className="w-20 p-2 rounded-xl bg-white dark:bg-neutral-900 border border-black/10 dark:border-white/15 text-center font-extrabold font-mono text-sm text-blue-600 dark:text-blue-400 focus:outline-none"
+                    required
+                  />
+                  <span className="text-xs font-bold text-neutral-500">dk</span>
+                  <button
+                    type="button"
+                    onClick={() => setManualDurationMinutes(prev => Math.min(720, (Number(prev) || 0) + 5))}
+                    className="px-2.5 py-1.5 rounded-lg bg-neutral-200/80 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 font-bold font-mono cursor-pointer hover:opacity-80"
+                  >
+                    +5
+                  </button>
                 </div>
               </div>
 
