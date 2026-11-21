@@ -530,6 +530,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     const unsubFocus = subscribeToCollection<FocusSession>('focusSessions', items => {
+      items.sort((a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime());
       setRawFocusSessions(items);
     });
 

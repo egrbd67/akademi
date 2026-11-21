@@ -298,10 +298,13 @@ export const FocusModeView: React.FC = () => {
         ? teacherSessions
         : teacherSessions.filter(s => s.studentId === filterStudentId);
     }
-    if (filterSubject !== 'ALL') {
-      return base.filter(s => normalizeSubjectName(s.subject) === filterSubject);
-    }
-    return base;
+    const result = filterSubject !== 'ALL'
+      ? base.filter(s => normalizeSubjectName(s.subject) === filterSubject)
+      : base;
+
+    return [...result].sort(
+      (a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime()
+    );
   }, [focusSessions, filterStudentId, filterSubject, role, currentStudent?.id, students]);
 
   const sessionStats = useMemo(() => {
@@ -957,10 +960,15 @@ export const FocusModeView: React.FC = () => {
       <div className="p-5 rounded-2xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-black/5 dark:border-white/5">
           <div>
-            <h2 className="text-sm font-bold text-neutral-900 dark:text-white">
-              Odak & Soru Kayıtları
-            </h2>
-            <p className="text-xs text-neutral-400">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-bold text-neutral-900 dark:text-white">
+                Odak & Soru Çözüm Geçmişi
+              </h2>
+              <span className="px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 text-[10px] font-semibold text-neutral-500 dark:text-neutral-400">
+                En Yeniden En Eskiye
+              </span>
+            </div>
+            <p className="text-xs text-neutral-400 mt-0.5">
               Toplam {sessionStats.totalHours} saat • {sessionStats.totalQuestions} soru • {sessionStats.totalReports} kayıt (Bugün {sessionStats.todayReports})
             </p>
           </div>

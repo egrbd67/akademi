@@ -49,6 +49,114 @@ const DAYS = [
   { id: 7, label: 'Pazar' },
 ];
 
+const SCHEDULE_WEEK_MEMORY_KEY = 'akademi_takip_firebase_v1_schedule_week_memory';
+
+interface CalendarWeekBounds {
+  mondayKey: string;
+  weekEpochIndex: number;
+  dateRangeLabel: string;
+  nextMondayLabel: string;
+}
+
+function getCalendarWeekBounds(now: Date = new Date()): CalendarWeekBounds {
+  const localNow = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dayOfWeek = localNow.getDay() === 0 ? 7 : localNow.getDay(); // 1 = Pazartesi ... 7 = Pazar
+  const mondayDate = new Date(localNow);
+  mondayDate.setDate(localNow.getDate() - (dayOfWeek - 1));
+  mondayDate.setHours(0, 0, 0, 0);
+
+  const sundayDate = new Date(mondayDate);
+  sundayDate.setDate(mondayDate.getDate() + 6);
+
+  const nextMondayDate = new Date(mondayDate);
+  nextMondayDate.setDate(mondayDate.getDate() + 7);
+
+  const y = mondayDate.getFullYear();
+  const m = String(mondayDate.getMonth() + 1).padStart(2, '0');
+  const d = String(mondayDate.getDate()).padStart(2, '0');
+  const mondayKey = `${y}-${m}-${d}`;
+
+  // Epoch Monday: 2024-01-01 00:00 local
+  const epochMonday = new Date(2024, 0, 1, 0, 0, 0, 0);
+  const weekEpochIndex = Math.round((mondayDate.getTime() - epochMonday.getTime()) / (7 * 86400000));
+
+  const fmtShort = (dt: Date) =>
+    dt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' });
+
+  return {
+    mondayKey,
+    weekEpochIndex,
+    dateRangeLabel: `${fmtShort(mondayDate)} Pzt – ${fmtShort(sundayDate)} Paz`,
+    nextMondayLabel: `${fmtShort(sundayDate)} Pazar 23:59 → ${fmtShort(nextMondayDate)} Pazartesi 00:00`,
+  };
+}
+
+function resolveRememberedOrAutoWeek(bounds: CalendarWeekBounds): {
+  selectedWeek: 1 | 2;
+  activeCycleWeek: 1 | 2;
+} {
+  try {
+    const raw = localStorage.getItem(SCHEDULE_WEEK_MEMORY_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as {
+        mondayKey?: string;
+        weekEpochIndex?: number;
+        activeWeek?: 1 | 2;
+        selectedWeek?: 1 | 2;
+      };
+      if (parsed && (parsed.activeWeek === 1 || parsed.activeWeek === 2)) {
+        if (parsed.mondayKey === bounds.mondayKey) {
+          // Same Monday-Sunday calendar week: remember exact week chosen by user
+          const remembered = parsed.selectedWeek === 1 || parsed.selectedWeek === 2
+            ? parsed.selectedWeek
+            : parsed.activeWeek;
+          return {
+            selectedWeek: remembered,
+            activeCycleWeek: remembered,
+          };
+        }
+        // Sunday night -> Monday 00:00 transition occurred! Advance week automatically
+        const prevIdx = typeof parsed.weekEpochIndex === 'number'
+          ? parsed.weekEpochIndex
+          : bounds.weekEpochIndex - 1;
+        const diffWeeks = Math.abs(bounds.weekEpochIndex - prevIdx);
+        const baseWeek = parsed.selectedWeek || parsed.activeWeek;
+        const nextWeek: 1 | 2 = diffWeeks % 2 === 1 ? (baseWeek === 1 ? 2 : 1) : baseWeek;
+        localStorage.setItem(
+          SCHEDULE_WEEK_MEMORY_KEY,
+          JSON.stringify({
+            mondayKey: bounds.mondayKey,
+            weekEpochIndex: bounds.weekEpochIndex,
+            activeWeek: nextWeek,
+            selectedWeek: nextWeek,
+          })
+        );
+        return {
+          selectedWeek: nextWeek,
+          activeCycleWeek: nextWeek,
+        };
+      }
+    }
+  } catch {}
+
+  const autoWeek: 1 | 2 = Math.abs(bounds.weekEpochIndex) % 2 === 0 ? 1 : 2;
+  try {
+    localStorage.setItem(
+      SCHEDULE_WEEK_MEMORY_KEY,
+      JSON.stringify({
+        mondayKey: bounds.mondayKey,
+        weekEpochIndex: bounds.weekEpochIndex,
+        activeWeek: autoWeek,
+        selectedWeek: autoWeek,
+      })
+    );
+  } catch {}
+  return {
+    selectedWeek: autoWeek,
+    activeCycleWeek: autoWeek,
+  };
+}
+
 interface ScheduleViewProps {
   onNavigateTab?: (tab: string) => void;
 }
@@ -78,14 +186,60 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
   const selectedBoxTheme = BOX_THEMES.find(b => b.id === boxTheme) || BOX_THEMES[0];
 
   // Today Day of Week computation (1 = Pazartesi, 2 = Salı, ..., 7 = Pazar)
+  const [weekBounds, setWeekBounds] = useState<CalendarWeekBounds>(() => getCalendarWeekBounds());
   const todayDayOfWeek = useMemo(() => {
     const d = new Date().getDay();
     return d === 0 ? 7 : d;
-  }, []);
+  }, [weekBounds.mondayKey]);
   const todayName = DAY_NAMES[todayDayOfWeek];
 
   const [selectedDay, setSelectedDay] = useState<number>(0); // 0 = all
-  const [selectedWeek, setSelectedWeek] = useState<1 | 2>(1); // 1 = 1. Hafta, 2 = 2. Hafta
+  const [selectedWeek, setSelectedWeekState] = useState<1 | 2>(() => {
+    return resolveRememberedOrAutoWeek(getCalendarWeekBounds()).selectedWeek;
+  });
+  const [activeCycleWeek, setActiveCycleWeek] = useState<1 | 2>(() => {
+    return resolveRememberedOrAutoWeek(getCalendarWeekBounds()).activeCycleWeek;
+  });
+
+  const setSelectedWeek = (week: 1 | 2) => {
+    const currentBounds = getCalendarWeekBounds();
+    setWeekBounds(currentBounds);
+    setSelectedWeekState(week);
+    setActiveCycleWeek(week);
+    try {
+      localStorage.setItem(
+        SCHEDULE_WEEK_MEMORY_KEY,
+        JSON.stringify({
+          mondayKey: currentBounds.mondayKey,
+          weekEpochIndex: currentBounds.weekEpochIndex,
+          activeWeek: week,
+          selectedWeek: week,
+        })
+      );
+    } catch {}
+  };
+
+  // Watch for Sunday 23:59 -> Monday 00:00 transition in real time and sync remembered week
+  React.useEffect(() => {
+    const checkWeekTransition = () => {
+      const freshBounds = getCalendarWeekBounds();
+      const resolved = resolveRememberedOrAutoWeek(freshBounds);
+      setWeekBounds(prev => (prev.mondayKey !== freshBounds.mondayKey ? freshBounds : prev));
+      setSelectedWeekState(prev => (prev !== resolved.selectedWeek ? resolved.selectedWeek : prev));
+      setActiveCycleWeek(prev => (prev !== resolved.activeCycleWeek ? resolved.activeCycleWeek : prev));
+    };
+
+    checkWeekTransition();
+    const timer = setInterval(checkWeekTransition, 15000);
+    window.addEventListener('focus', checkWeekTransition);
+    document.addEventListener('visibilitychange', checkWeekTransition);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', checkWeekTransition);
+      document.removeEventListener('visibilitychange', checkWeekTransition);
+    };
+  }, []);
+
   const [viewMode, setViewMode] = useState<'matrix' | 'cards'>('matrix'); // Default: Dikey A4 Oturum Matrisi
   const [completionFilter, setCompletionFilter] = useState<'all' | 'completed' | 'pending'>('all'); // Oturum tamamlama filtresi
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -501,9 +655,18 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
               <span>Bugün: {todayName}</span>
               <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-600 text-white font-mono">{todayDayOfWeek}. Gün</span>
             </div>
+
+            {/* Active Week Indicator Badge */}
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-2xl bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 text-xs font-extrabold shadow-2xs">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Şu Anki Hafta: {selectedWeek}. Hafta</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-600 text-white font-mono">
+                {weekBounds.dateRangeLabel}
+              </span>
+            </div>
           </div>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-            Dikey A4 ve Excel uyumlu oturum matrisi. Her güne 1, 2, 3... oturum ekleyin, saat isteğe bağlıdır.
+            Şu an <strong>{selectedWeek}. Hafta ({weekBounds.dateRangeLabel})</strong> programı görüntüleniyor. Her Pazar gecesini Pazartesiye bağlayan gece (00:00) hafta otomatik olarak değişir ve seçili haftanız hatırlanır.
           </p>
         </div>
 
@@ -718,16 +881,19 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
               <Target className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-sm font-extrabold text-neutral-900 dark:text-white">
-                  {selectedWeek}. Hafta Oturum Takip Çizelgesi
+                  {selectedWeek}. Hafta Oturum Takip Çizelgesi ({weekBounds.dateRangeLabel})
                 </h2>
+                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25">
+                  Aktif Program: {selectedWeek}. Hafta
+                </span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
                   {role === 'teacher' ? 'Öğretmen Takip Görünümü' : 'Öğrenci Program Takibi'}
                 </span>
               </div>
               <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                {activeStudent?.name} için bu haftaki oturumların tamamlanma durumunu gün gün inceleyin.
+                {activeStudent?.name} için {selectedWeek}. Hafta oturumları • Pazar gecesi Pazartesi 00:00'da otomatik olarak {selectedWeek === 1 ? '2. Hafta' : '1. Hafta'} programına geçer.
               </p>
             </div>
           </div>
@@ -868,7 +1034,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
         <div className="rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 shadow-xs overflow-hidden">
           <div className="p-3.5 sm:p-4 bg-neutral-50 dark:bg-neutral-900/60 border-b border-black/5 dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 no-print">
             <div className="flex items-center gap-3 flex-wrap">
-              {/* 1. Hafta / 2. Hafta Butonları - Soru Çözme Programı ile Bitişik ve Üstte Net Görünür */}
+              {/* 1. Hafta / 2. Hafta Butonları - Aktif Hafta Göstergeli ve Hafızalı */}
               <div className="flex p-1 rounded-2xl bg-neutral-200/80 dark:bg-neutral-800 border border-black/10 dark:border-white/10 shadow-xs">
                 <button
                   type="button"
@@ -879,10 +1045,15 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                       ? 'shadow-xs scale-[1.02]'
                       : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
                   }`}
-                  title="1. Hafta Oturum Programını Görüntüle"
+                  title="1. Hafta Oturum Programını Görüntüle ve Bu Hafta İçin Hatırla"
                 >
                   <Calendar className="w-3.5 h-3.5" />
                   <span>1. Hafta</span>
+                  {selectedWeek === 1 && (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-white/25 text-white font-black uppercase">
+                      Aktif
+                    </span>
+                  )}
                 </button>
                 <button
                   type="button"
@@ -893,17 +1064,22 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                       ? 'shadow-xs scale-[1.02]'
                       : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
                   }`}
-                  title="2. Hafta Oturum Programını Görüntüle"
+                  title="2. Hafta Oturum Programını Görüntüle ve Bu Hafta İçin Hatırla"
                 >
                   <Calendar className="w-3.5 h-3.5" />
                   <span>2. Hafta</span>
+                  {selectedWeek === 2 && (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-white/25 text-white font-black uppercase">
+                      Aktif
+                    </span>
+                  )}
                 </button>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Grid3X3 className="w-4 h-4 text-blue-500" />
                 <span className="font-extrabold text-xs sm:text-sm text-neutral-900 dark:text-white">
-                  {selectedWeek}. Hafta Oturum Tablosu ({visibleSessionsCount} Oturum)
+                  Şu An: {selectedWeek}. Hafta Programı ({weekBounds.dateRangeLabel})
                 </span>
               </div>
             </div>
@@ -1250,6 +1426,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
               >
                 <Calendar className="w-3.5 h-3.5" />
                 <span>1. Hafta</span>
+                {selectedWeek === 1 && (
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-white/25 text-white font-black uppercase">
+                    Aktif
+                  </span>
+                )}
               </button>
               <button
                 type="button"
@@ -1264,6 +1445,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
               >
                 <Calendar className="w-3.5 h-3.5" />
                 <span>2. Hafta</span>
+                {selectedWeek === 2 && (
+                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-white/25 text-white font-black uppercase">
+                    Aktif
+                  </span>
+                )}
               </button>
             </div>
 

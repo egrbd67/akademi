@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   Plus,
   BarChart3,
-  ArrowRight,
   Award,
   CheckCircle2,
   BookOpen,
@@ -17,7 +16,9 @@ import {
   X,
   Check,
   Layers,
-  Clock
+  Clock,
+  Target,
+  FileText
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -103,11 +104,16 @@ export const TrialAnalysisView: React.FC = () => {
     addHomework
   } = useApp();
 
+  // Separate tabs for Deneme Analizi vs Soru Analizi
+  const [analysisTab, setAnalysisTab] = useState<'exams' | 'questions'>('exams');
+
   const [isAddExamModalOpen, setIsAddExamModalOpen] = useState(false);
   const [editingExamId, setEditingExamId] = useState<string | null>(null);
   const [confirmDeleteExamId, setConfirmDeleteExamId] = useState<string | null>(null);
 
-  const [selectedCrossSubject, setSelectedCrossSubject] = useState<string>('ALL');
+  const [selectedExamSubjectFilter, setSelectedExamSubjectFilter] = useState<string>('ALL');
+  const [selectedQuestionSubjectFilter, setSelectedQuestionSubjectFilter] = useState<string>('ALL');
+
   const [newSubjectVarDraft, setNewSubjectVarDraft] = useState<string>('');
   const [isAddingSubjectVar, setIsAddingSubjectVar] = useState<boolean>(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -179,7 +185,7 @@ export const TrialAnalysisView: React.FC = () => {
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [trialExams, currentStudent]);
 
-  // All editable question records for current student (FocusSessions + Completed Schedules with questions)
+  // All editable question records for current student (sorted newest-first from top to bottom)
   const studentQuestionRecords = useMemo<EditableQuestionRecord[]>(() => {
     if (!currentStudent) return [];
     const list: EditableQuestionRecord[] = [];
@@ -249,25 +255,86 @@ export const TrialAnalysisView: React.FC = () => {
     return list.sort((a, b) => b.timestampMs - a.timestampMs);
   }, [focusSessions, schedules, currentStudent]);
 
-  // Unified Cross-Subject Analysis (Denemeler + Ders/Soru Kayıtları aynı ders değişkeni üzerinde)
-  const crossSubjectAnalysis = useMemo(() => {
+  // 1) DENEME SINAVI DERS BAZLI ANALİZ (Sadece Deneme Sınavı Bölümlerinden)
+  const examSubjectAnalysis = useMemo(() => {
     if (!currentStudent) return [];
 
     const statsMap = new Map<
       string,
       {
         subject: string;
-        examAppearanceCount: number;
-        examCorrect: number;
-        examWrong: number;
-        examBlank: number;
-        examTotalNet: number;
-        studyRecordCount: number;
-        studyCorrect: number;
-        studyWrong: number;
-        studyBlank: number;
-        studyTotalNet: number;
-        studyMinutes: number;
+        examCount: number;
+        correct: number;
+        wrong: number;
+        blank: number;
+        totalNet: number;
+        errorTopics: Set<string>;
+      }
+    >();
+
+    const ensureSubject = (rawName: string) => {
+      const canonical = normalizeSubjectName(rawName);
+      if (!statsMap.has(canonical)) {
+        statsMap.set(canonical, {
+          subject: canonical,
+          examCount: 0,
+          correct: 0,
+          wrong: 0,
+          blank: 0,
+          totalNet: 0,
+          errorTopics: new Set<string>()
+        });
+      }
+      return statsMap.get(canonical)!;
+    };
+
+    studentExams.forEach(exam => {
+      (exam.sections || []).forEach(sec => {
+        const entry = ensureSubject(sec.name);
+        entry.examCount += 1;
+        entry.correct += Number(sec.correct) || 0;
+        entry.wrong += Number(sec.wrong) || 0;
+        entry.blank += Number(sec.blank) || 0;
+        entry.totalNet += Number(sec.net) || 0;
+      });
+      (exam.errorTags || []).forEach(tag => {
+        const entry = ensureSubject(tag.subject);
+        if (tag.topic) entry.errorTopics.add(tag.topic);
+      });
+    });
+
+    return Array.from(statsMap.values())
+      .map(item => {
+        const totalQuestions = item.correct + item.wrong + item.blank;
+        const avgNet = item.examCount > 0 ? Number((item.totalNet / item.examCount).toFixed(2)) : 0;
+        const totalNet = Number(item.totalNet.toFixed(2));
+        const accuracy = totalQuestions > 0 ? Math.round((item.correct / totalQuestions) * 100) : 0;
+        return {
+          ...item,
+          totalQuestions,
+          avgNet,
+          totalNet,
+          accuracy,
+          topics: Array.from(item.errorTopics)
+        };
+      })
+      .sort((a, b) => b.totalQuestions - a.totalQuestions);
+  }, [currentStudent, studentExams]);
+
+  // 2) SORU ÇÖZÜM & DERS ANALİZİ (Sadece Odak / Program / Ödev Soru Kayıtlarından)
+  const questionSubjectAnalysis = useMemo(() => {
+    if (!currentStudent) return [];
+
+    const statsMap = new Map<
+      string,
+      {
+        subject: string;
+        recordCount: number;
+        correct: number;
+        wrong: number;
+        blank: number;
+        totalNet: number;
+        durationMinutes: number;
         topicsSet: Set<string>;
       }
     >();
@@ -277,105 +344,73 @@ export const TrialAnalysisView: React.FC = () => {
       if (!statsMap.has(canonical)) {
         statsMap.set(canonical, {
           subject: canonical,
-          examAppearanceCount: 0,
-          examCorrect: 0,
-          examWrong: 0,
-          examBlank: 0,
-          examTotalNet: 0,
-          studyRecordCount: 0,
-          studyCorrect: 0,
-          studyWrong: 0,
-          studyBlank: 0,
-          studyTotalNet: 0,
-          studyMinutes: 0,
+          recordCount: 0,
+          correct: 0,
+          wrong: 0,
+          blank: 0,
+          totalNet: 0,
+          durationMinutes: 0,
           topicsSet: new Set<string>()
         });
       }
       return statsMap.get(canonical)!;
     };
 
-    // 1. Aggregate Trial Exam Sections by normalized subject variable
-    studentExams.forEach(exam => {
-      (exam.sections || []).forEach(sec => {
-        const entry = ensureSubject(sec.name);
-        entry.examAppearanceCount += 1;
-        entry.examCorrect += Number(sec.correct) || 0;
-        entry.examWrong += Number(sec.wrong) || 0;
-        entry.examBlank += Number(sec.blank) || 0;
-        entry.examTotalNet += Number(sec.net) || 0;
-      });
-      (exam.errorTags || []).forEach(tag => {
-        const entry = ensureSubject(tag.subject);
-        if (tag.topic) entry.topicsSet.add(tag.topic);
-      });
-    });
-
-    // 2. Aggregate Focus / Schedule Question Records by normalized subject variable
     studentQuestionRecords.forEach(rec => {
       const entry = ensureSubject(rec.subject);
-      entry.studyRecordCount += 1;
-      entry.studyCorrect += rec.correct;
-      entry.studyWrong += rec.wrong;
-      entry.studyBlank += rec.blank;
-      entry.studyTotalNet += rec.net;
-      entry.studyMinutes += rec.durationMinutes;
+      entry.recordCount += 1;
+      entry.correct += rec.correct;
+      entry.wrong += rec.wrong;
+      entry.blank += rec.blank;
+      entry.totalNet += rec.net;
+      entry.durationMinutes += rec.durationMinutes;
       if (rec.topic) entry.topicsSet.add(rec.topic);
     });
 
-    // 3. Also include Submitted Homeworks
     homeworks
       .filter(h => h.studentId === currentStudent.id && h.studentSubmission)
       .forEach(hw => {
         const sub = hw.studentSubmission!;
         const entry = ensureSubject(hw.subject);
-        entry.studyRecordCount += 1;
-        entry.studyCorrect += sub.correct || 0;
-        entry.studyWrong += sub.wrong || 0;
-        entry.studyBlank += sub.blank || 0;
-        entry.studyTotalNet += sub.net || 0;
+        entry.recordCount += 1;
+        entry.correct += sub.correct || 0;
+        entry.wrong += sub.wrong || 0;
+        entry.blank += sub.blank || 0;
+        entry.totalNet += sub.net || 0;
         if (hw.topic) entry.topicsSet.add(hw.topic);
       });
 
     return Array.from(statsMap.values())
       .map(item => {
-        const examQuestions = item.examCorrect + item.examWrong + item.examBlank;
-        const studyQuestions = item.studyCorrect + item.studyWrong + item.studyBlank;
-        const combinedCorrect = item.examCorrect + item.studyCorrect;
-        const combinedWrong = item.examWrong + item.studyWrong;
-        const combinedBlank = item.examBlank + item.studyBlank;
-        const combinedQuestions = examQuestions + studyQuestions;
-        const combinedNet = Number((item.examTotalNet + item.studyTotalNet).toFixed(2));
-        const examAvgNet = item.examAppearanceCount > 0
-          ? Number((item.examTotalNet / item.examAppearanceCount).toFixed(2))
-          : 0;
-        const examAccuracy = examQuestions > 0
-          ? Math.round((item.examCorrect / examQuestions) * 100)
-          : 0;
-        const studyAccuracy = studyQuestions > 0
-          ? Math.round((item.studyCorrect / studyQuestions) * 100)
-          : 0;
-        const combinedAccuracy = combinedQuestions > 0
-          ? Math.round((combinedCorrect / combinedQuestions) * 100)
-          : 0;
-
+        const totalQuestions = item.correct + item.wrong + item.blank;
+        const totalNet = Number(item.totalNet.toFixed(2));
+        const accuracy = totalQuestions > 0 ? Math.round((item.correct / totalQuestions) * 100) : 0;
         return {
           ...item,
-          examQuestions,
-          studyQuestions,
-          combinedCorrect,
-          combinedWrong,
-          combinedBlank,
-          combinedQuestions,
-          combinedNet,
-          examAvgNet,
-          examAccuracy,
-          studyAccuracy,
-          combinedAccuracy,
+          totalQuestions,
+          totalNet,
+          accuracy,
           topics: Array.from(item.topicsSet)
         };
       })
-      .sort((a, b) => b.combinedQuestions - a.combinedQuestions || b.studyMinutes - a.studyMinutes);
-  }, [currentStudent, studentExams, studentQuestionRecords, homeworks]);
+      .sort((a, b) => b.totalQuestions - a.totalQuestions || b.durationMinutes - a.durationMinutes);
+  }, [currentStudent, studentQuestionRecords, homeworks]);
+
+  // Overall Question Solving KPIs
+  const questionKpis = useMemo(() => {
+    const totalQuestions = questionSubjectAnalysis.reduce((acc, r) => acc + r.totalQuestions, 0);
+    const totalCorrect = questionSubjectAnalysis.reduce((acc, r) => acc + r.correct, 0);
+    const totalNet = Number(questionSubjectAnalysis.reduce((acc, r) => acc + r.totalNet, 0).toFixed(2));
+    const totalMinutes = questionSubjectAnalysis.reduce((acc, r) => acc + r.durationMinutes, 0);
+    const overallAccuracy = totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : 0;
+    return {
+      totalQuestions,
+      totalCorrect,
+      totalNet,
+      totalMinutes,
+      overallAccuracy
+    };
+  }, [questionSubjectAnalysis]);
 
   // Line Chart Data: Net progression over time
   const netProgressionData = useMemo(() => {
@@ -460,7 +495,7 @@ export const TrialAnalysisView: React.FC = () => {
       .sort((a, b) => b.totalErrors - a.totalErrors);
   }, [studentExams]);
 
-  // Overall stats
+  // Overall exam stats
   const latestExam = studentExams[studentExams.length - 1];
   const previousExam = studentExams.length > 1 ? studentExams[studentExams.length - 2] : null;
   const netDiff = latestExam && previousExam ? +(latestExam.totalNet - previousExam.totalNet).toFixed(2) : 0;
@@ -730,7 +765,6 @@ export const TrialAnalysisView: React.FC = () => {
     setRedAlertActionModal(null);
   };
 
-  // If no student exists at all
   if (!currentStudent) {
     return (
       <div className="p-8 sm:p-12 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 text-center max-w-lg mx-auto my-12 shadow-xs">
@@ -738,7 +772,7 @@ export const TrialAnalysisView: React.FC = () => {
           <BarChart3 className="w-8 h-8" />
         </div>
         <h3 className="text-lg font-bold text-neutral-900 dark:text-white mb-2">
-          Deneme Sınavı & Ders Analizi
+          Deneme Sınavı & Soru Analizi
         </h3>
         <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
           Deneme sınavı net grafikleri ve ders bazlı soru analizi için lütfen önce Yönetim panelinden bir öğrenci ekleyin.
@@ -747,22 +781,26 @@ export const TrialAnalysisView: React.FC = () => {
     );
   }
 
-  const filteredCrossSubjectRows = selectedCrossSubject === 'ALL'
-    ? crossSubjectAnalysis
-    : crossSubjectAnalysis.filter(r => r.subject === selectedCrossSubject);
+  const filteredExamSubjectRows = selectedExamSubjectFilter === 'ALL'
+    ? examSubjectAnalysis
+    : examSubjectAnalysis.filter(r => r.subject === selectedExamSubjectFilter);
 
-  const filteredQuestionRecords = selectedCrossSubject === 'ALL'
+  const filteredQuestionSubjectRows = selectedQuestionSubjectFilter === 'ALL'
+    ? questionSubjectAnalysis
+    : questionSubjectAnalysis.filter(r => r.subject === selectedQuestionSubjectFilter);
+
+  const filteredQuestionRecords = selectedQuestionSubjectFilter === 'ALL'
     ? studentQuestionRecords
-    : studentQuestionRecords.filter(r => r.subject === selectedCrossSubject);
+    : studentQuestionRecords.filter(r => r.subject === selectedQuestionSubjectFilter);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-black/5 dark:border-white/5">
+      {/* Top Header & Segmented Switcher (Deneme Analizi vs Soru Analizi Ayrı) */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-3 border-b border-black/5 dark:border-white/5">
         <div>
           <div className="flex items-center gap-2.5 flex-wrap">
             <h1 className="text-xl sm:text-2xl font-extrabold text-neutral-900 dark:text-white tracking-tight">
-              Deneme & Ortak Ders Analizi
+              {analysisTab === 'exams' ? 'Deneme Sınavı Analizi' : 'Soru Çözüm & Ders Analizi'}
             </h1>
             {role === 'teacher' && students.length > 0 ? (
               <div className="flex items-center gap-1.5 px-3 py-1 rounded-2xl bg-neutral-200/80 dark:bg-neutral-800 border border-black/5 dark:border-white/5 text-xs">
@@ -787,26 +825,59 @@ export const TrialAnalysisView: React.FC = () => {
             ) : null}
           </div>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-            Deneme sınavları ve ders/soru kayıtları ortak ders değişkenleri altında birleştirilerek analiz edilir.
+            {analysisTab === 'exams'
+              ? 'Deneme sınavı net gelişimi, sınav bölümleri ders analizi ve kronik hata tespiti.'
+              : 'Odak modu, haftalık program ve ödevlerde çözülen soruların ders değişkenlerine göre analizi.'}
           </p>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
-          <button
-            onClick={() => handleOpenNewQuestionRecordModal(selectedCrossSubject)}
-            className="px-3.5 py-2.5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-all active:scale-95 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Soru Kaydı Ekle</span>
-          </button>
+        {/* Segmented Control: Deneme Analizi | Soru & Ders Analizi */}
+        <div className="flex flex-wrap items-center gap-2.5 self-start lg:self-auto">
+          <div className="flex p-1 rounded-2xl bg-neutral-200/80 dark:bg-neutral-800 border border-black/5 dark:border-white/5">
+            <button
+              type="button"
+              onClick={() => setAnalysisTab('exams')}
+              className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 ${
+                analysisTab === 'exams'
+                  ? 'bg-white dark:bg-[#2C2C2E] text-blue-600 dark:text-blue-400 shadow-xs'
+                  : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Deneme Sınavı Analizi ({studentExams.length})</span>
+            </button>
 
-          <button
-            onClick={handleOpenNewExamModal}
-            className="px-4 py-2.5 rounded-2xl bg-blue-500 hover:bg-blue-600 text-white font-bold text-xs flex items-center gap-2 shadow-md shadow-blue-500/25 transition-all active:scale-95 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Yeni Deneme Sonucu Gir</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setAnalysisTab('questions')}
+              className={`px-4 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 ${
+                analysisTab === 'questions'
+                  ? 'bg-white dark:bg-[#2C2C2E] text-emerald-600 dark:text-emerald-400 shadow-xs'
+                  : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+              }`}
+            >
+              <Target className="w-3.5 h-3.5" />
+              <span>Soru Çözüm & Ders Analizi ({studentQuestionRecords.length})</span>
+            </button>
+          </div>
+
+          {analysisTab === 'exams' ? (
+            <button
+              onClick={handleOpenNewExamModal}
+              className="px-4 py-2.5 rounded-2xl bg-blue-500 hover:bg-blue-600 text-white font-bold text-xs flex items-center gap-2 shadow-md shadow-blue-500/25 transition-all active:scale-95 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Yeni Deneme Sonucu Gir</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => handleOpenNewQuestionRecordModal(selectedQuestionSubjectFilter)}
+              className="px-4 py-2.5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-500/25 transition-all active:scale-95 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Soru Kaydı Ekle</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -826,757 +897,917 @@ export const TrialAnalysisView: React.FC = () => {
         </div>
       )}
 
-      {/* Quick KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs">
-          <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Son Deneme Neti</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-black text-neutral-900 dark:text-white font-mono">
-              {latestExam ? latestExam.totalNet : '0'}
-            </span>
-            {netDiff !== 0 && (
-              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                netDiff > 0 ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
-              }`}>
-                {netDiff > 0 ? `+${netDiff}` : netDiff} Net
-              </span>
-            )}
-          </div>
-          <p className="text-[11px] text-neutral-400 mt-1 truncate">
-            {latestExam ? latestExam.title : 'Henüz deneme yok'}
-          </p>
-        </div>
-
-        <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs">
-          <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">En Yüksek Rekor Net</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-black text-emerald-600 dark:text-emerald-400 font-mono">
-              {highestNet}
-            </span>
-            <Award className="w-4 h-4 text-amber-500" />
-          </div>
-          <p className="text-[11px] text-neutral-400 mt-1">
-            Toplam {studentExams.length} deneme sınavı
-          </p>
-        </div>
-
-        <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs">
-          <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Ortak Ders Değişkeni</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-black text-blue-600 dark:text-blue-400 font-mono">
-              {subjects.length}
-            </span>
-            <span className="text-xs text-blue-500 font-semibold">Ders</span>
-          </div>
-          <p className="text-[11px] text-neutral-400 mt-1">
-            Deneme + Ders ortak değişkeni
-          </p>
-        </div>
-
-        <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs">
-          <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Kayıtlı Soru Çözümü</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-black text-indigo-600 dark:text-indigo-400 font-mono">
-              {studentQuestionRecords.length}
-            </span>
-            <span className="text-xs font-semibold text-indigo-500">Kayıt</span>
-          </div>
-          <p className="text-[11px] text-neutral-400 mt-1">
-            Düzenlenebilir ve silinebilir
-          </p>
-        </div>
-      </div>
-
-      {/* ORTAK DERS DEĞİŞKENLERİ & DERS BAZLI BİRLEŞİK ANALİZ (DENEME + SORU/DERS KAYITLARI) */}
-      <div className="p-5 sm:p-6 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 shadow-xs space-y-5">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-4 border-b border-black/5 dark:border-white/5">
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-              <Layers className="w-5 h-5" />
+      {/* =====================================================================
+          TAB 1: DENEME SINAVI ANALİZİ (AYRI GÖRÜNÜM)
+         ===================================================================== */}
+      {analysisTab === 'exams' ? (
+        <div className="space-y-6">
+          {/* Deneme KPI Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs">
+              <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Son Deneme Neti</span>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-2xl sm:text-3xl font-black text-neutral-900 dark:text-white font-mono">
+                  {latestExam ? latestExam.totalNet : '0'}
+                </span>
+                {netDiff !== 0 && (
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                    netDiff > 0 ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                  }`}>
+                    {netDiff > 0 ? `+${netDiff}` : netDiff} Net
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-neutral-400 mt-1 truncate">
+                {latestExam ? latestExam.title : 'Henüz deneme yok'}
+              </p>
             </div>
-            <div>
-              <h2 className="text-base sm:text-lg font-extrabold text-neutral-900 dark:text-white">
-                Ortak Ders Değişkenleri Üzerinden Birleşik Performans Analizi
-              </h2>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                Deneme sınavlarında ve ders/odak çalışmalarında girilen aynı ders değişkenleri otomatik eşleştirilir ve birlikte analiz edilir.
+
+            <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs">
+              <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">En Yüksek Rekor Net</span>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-2xl sm:text-3xl font-black text-emerald-600 dark:text-emerald-400 font-mono">
+                  {highestNet}
+                </span>
+                <Award className="w-4 h-4 text-amber-500" />
+              </div>
+              <p className="text-[11px] text-neutral-400 mt-1">
+                Toplam {studentExams.length} deneme sınavı
+              </p>
+            </div>
+
+            <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs">
+              <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Analiz Edilen Ders</span>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-2xl sm:text-3xl font-black text-blue-600 dark:text-blue-400 font-mono">
+                  {examSubjectAnalysis.length}
+                </span>
+                <span className="text-xs text-blue-500 font-semibold">Branş</span>
+              </div>
+              <p className="text-[11px] text-neutral-400 mt-1">
+                Deneme ders değişkeni
+              </p>
+            </div>
+
+            <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs">
+              <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Kronik Hata Uyarısı</span>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className={`text-2xl sm:text-3xl font-black font-mono ${
+                  chronicErrors.length > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600'
+                }`}>
+                  {chronicErrors.length}
+                </span>
+                <span className="text-xs font-semibold text-rose-500">Konu</span>
+              </div>
+              <p className="text-[11px] text-neutral-400 mt-1">
+                Tekrarlayan eksik konular
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            {isAddingSubjectVar ? (
-              <div className="flex items-center gap-1.5 bg-neutral-100 dark:bg-neutral-800 p-1.5 rounded-xl border border-blue-500/30">
-                <input
-                  type="text"
-                  value={newSubjectVarDraft}
-                  onChange={e => setNewSubjectVarDraft(e.target.value)}
-                  placeholder="Yeni ders değişkeni..."
-                  className="px-2.5 py-1 rounded-lg bg-white dark:bg-neutral-900 text-xs font-bold text-neutral-900 dark:text-white focus:outline-none"
-                  autoFocus
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (newSubjectVarDraft.trim()) {
-                      const norm = normalizeSubjectName(newSubjectVarDraft.trim());
-                      addSubjectVariable(norm);
-                      setSelectedCrossSubject(norm);
-                      setNewSubjectVarDraft('');
-                      setIsAddingSubjectVar(false);
-                      showNotice(`"${norm}" ortak ders değişkeni olarak eklendi.`);
-                    }
-                  }}
-                  className="px-2.5 py-1 rounded-lg bg-blue-600 text-white text-xs font-bold cursor-pointer"
-                >
-                  Ekle
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAddingSubjectVar(false);
-                    setNewSubjectVarDraft('');
-                  }}
-                  className="px-2 py-1 rounded-lg text-xs font-semibold text-neutral-500 cursor-pointer"
-                >
-                  İptal
-                </button>
+          {/* DENEME SINAVLARI DERS DEĞİŞKENİ ANALİZİ */}
+          <div className="p-5 sm:p-6 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-black/5 dark:border-white/5">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                  <Layers className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-extrabold text-neutral-900 dark:text-white">
+                    Deneme Sınavları Ders Bazlı Performans Analizi
+                  </h2>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                    Yalnızca deneme sınavlarındaki ders bölümlerinin ortak ders değişkenlerine göre net ve başarı analizi.
+                  </p>
+                </div>
               </div>
-            ) : (
+            </div>
+
+            {/* Subject Filter Chips for Trial Exams */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
               <button
                 type="button"
-                onClick={() => setIsAddingSubjectVar(true)}
-                className="px-3 py-2 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Yeni Ders Değişkeni Tanımla</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Shared Subject Variable Filter Bar */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-          <button
-            type="button"
-            onClick={() => setSelectedCrossSubject('ALL')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-              selectedCrossSubject === 'ALL'
-                ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700'
-            }`}
-          >
-            Tüm Dersler ({crossSubjectAnalysis.length})
-          </button>
-
-          {subjects.map(subj => {
-            const stat = crossSubjectAnalysis.find(s => s.subject === subj);
-            const isSelected = selectedCrossSubject === subj;
-            return (
-              <button
-                key={subj}
-                type="button"
-                onClick={() => setSelectedCrossSubject(isSelected ? 'ALL' : subj)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
-                  isSelected
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700'
+                onClick={() => setSelectedExamSubjectFilter('ALL')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                  selectedExamSubjectFilter === 'ALL'
+                    ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                    : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700'
                 }`}
               >
-                <span>{subj}</span>
-                {stat && stat.combinedQuestions > 0 && (
-                  <span className={`font-mono text-[10px] ${isSelected ? 'text-white/90' : 'text-blue-500'}`}>
-                    · {stat.combinedQuestions}S
-                  </span>
-                )}
+                Tüm Deneme Dersleri ({examSubjectAnalysis.length})
               </button>
-            );
-          })}
-        </div>
-
-        {/* Cross-Subject Comparison Chart (when multiple subjects have data) */}
-        {filteredCrossSubjectRows.length > 0 && (
-          <div className="h-64 w-full pt-2">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={filteredCrossSubjectRows}
-                margin={{ top: 10, right: 20, left: 0, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" opacity={0.12} />
-                <XAxis dataKey="subject" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#1C1C1E',
-                    borderColor: 'rgba(255,255,255,0.1)',
-                    borderRadius: '14px',
-                    color: '#fff',
-                    fontSize: '12px'
-                  }}
-                />
-                <Legend wrapperStyle={{ fontSize: '12px' }} />
-                <Bar
-                  dataKey="examAccuracy"
-                  name="Deneme Başarı %"
-                  fill="#007AFF"
-                  radius={[6, 6, 0, 0]}
-                  barSize={22}
-                />
-                <Bar
-                  dataKey="studyAccuracy"
-                  name="Ders/Soru Çözüm Başarı %"
-                  fill="#34C759"
-                  radius={[6, 6, 0, 0]}
-                  barSize={22}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-
-        {/* Cross-Subject Unified Table */}
-        {filteredCrossSubjectRows.length === 0 ? (
-          <div className="py-8 text-center text-xs text-neutral-400">
-            Seçili ders değişkeni için henüz deneme veya soru çözümü verisi bulunmuyor.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="text-neutral-400 border-b border-black/5 dark:border-white/5 font-semibold">
-                  <th className="py-2.5 pr-3">Ders Değişkeni</th>
-                  <th className="py-2.5 px-3 text-right">Deneme (Ort. Net / Başarı)</th>
-                  <th className="py-2.5 px-3 text-right">Soru/Odak Çözümü (Net / Başarı)</th>
-                  <th className="py-2.5 px-3 text-right">Birleşik Toplam Soru (D/Y/B)</th>
-                  <th className="py-2.5 px-3 text-right">Toplam Net</th>
-                  <th className="py-2.5 px-3 text-right">Çalışma Süresi</th>
-                  <th className="py-2.5 pl-3 text-right">Genel Başarı</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-black/5 dark:divide-white/5 font-mono tabular-nums">
-                {filteredCrossSubjectRows.map(row => (
-                  <tr
+              {examSubjectAnalysis.map(row => {
+                const isSelected = selectedExamSubjectFilter === row.subject;
+                return (
+                  <button
                     key={row.subject}
-                    onClick={() =>
-                      setSelectedCrossSubject(prev => (prev === row.subject ? 'ALL' : row.subject))
-                    }
-                    className={`cursor-pointer transition-colors ${
-                      selectedCrossSubject === row.subject
-                        ? 'bg-blue-500/10'
-                        : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/40'
+                    type="button"
+                    onClick={() => setSelectedExamSubjectFilter(isSelected ? 'ALL' : row.subject)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                      isSelected
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700'
                     }`}
                   >
-                    <td className="py-3 pr-3 font-sans">
-                      <div className="font-bold text-neutral-900 dark:text-white flex items-center gap-2">
-                        <span>{row.subject}</span>
-                        {row.topics.length > 0 && (
-                          <span className="text-[10px] font-normal text-neutral-400 truncate max-w-[180px]">
-                            ({row.topics.slice(0, 2).join(', ')})
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="py-3 px-3 text-right">
-                      {row.examAppearanceCount > 0 ? (
-                        <div>
-                          <span className="font-bold text-blue-600 dark:text-blue-400">
-                            {row.examAvgNet} Net
-                          </span>
-                          <span className="text-neutral-400 text-[11px] ml-1.5">
-                            (%{row.examAccuracy} · {row.examAppearanceCount} deneme)
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="text-neutral-400">-</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-3 text-right">
-                      {row.studyQuestions > 0 ? (
-                        <div>
-                          <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                            {Number(row.studyTotalNet.toFixed(2))} Net
-                          </span>
-                          <span className="text-neutral-400 text-[11px] ml-1.5">
-                            (%{row.studyAccuracy} · {row.studyQuestions} soru)
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="text-neutral-400">-</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-3 text-right">
-                      <span className="font-bold text-neutral-900 dark:text-white">
-                        {row.combinedQuestions}
-                      </span>
-                      <span className="text-[11px] text-neutral-500 ml-1">
-                        ({row.combinedCorrect}D/{row.combinedWrong}Y/{row.combinedBlank}B)
-                      </span>
-                    </td>
-                    <td className="py-3 px-3 text-right font-extrabold text-indigo-600 dark:text-indigo-400">
-                      {row.combinedNet} Net
-                    </td>
-                    <td className="py-3 px-3 text-right text-neutral-600 dark:text-neutral-300">
-                      {row.studyMinutes > 0 ? `${row.studyMinutes} dk` : '-'}
-                    </td>
-                    <td className="py-3 pl-3 text-right">
-                      <span
-                        className={`px-2 py-0.5 rounded-lg font-bold text-xs ${
-                          row.combinedAccuracy >= 75
-                            ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                            : row.combinedAccuracy >= 50
-                            ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                            : 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
-                        }`}
-                      >
-                        %{row.combinedAccuracy}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                    <span>{row.subject}</span>
+                    <span className={`font-mono text-[10px] ${isSelected ? 'text-white/90' : 'text-blue-500'}`}>
+                      · Ort. {row.avgNet} Net
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
 
-      {/* SORU VE ÇALIŞMA KAYITLARI YÖNETİMİ (DÜZENLE & SİL) */}
-      <div className="p-5 sm:p-6 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-black/5 dark:border-white/5">
-          <div>
-            <h2 className="text-base font-bold text-neutral-900 dark:text-white">
-              Soru Çözüm & Ders Kayıtları ({selectedCrossSubject === 'ALL' ? 'Tüm Dersler' : selectedCrossSubject})
-            </h2>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              Girilen soru kayıtlarını buradan düzenleyebilir, ders değişkenini değiştirebilir veya silebilirsiniz.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => handleOpenNewQuestionRecordModal(selectedCrossSubject)}
-            className="px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Yeni Soru Kaydı Ekle</span>
-          </button>
-        </div>
-
-        {filteredQuestionRecords.length === 0 ? (
-          <div className="py-8 text-center text-xs text-neutral-400">
-            Bu ders değişkeni için henüz soru çözümü kaydı bulunmuyor.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="text-neutral-400 border-b border-black/5 dark:border-white/5 font-semibold">
-                  <th className="py-2 pr-3">Tarih</th>
-                  <th className="py-2 px-3">Ders Değişkeni</th>
-                  <th className="py-2 px-3">Konu</th>
-                  <th className="py-2 px-3 text-right">Süre</th>
-                  <th className="py-2 px-3 text-right">Doğru / Yanlış / Boş</th>
-                  <th className="py-2 px-3 text-right">Net</th>
-                  <th className="py-2 pl-3 text-right">Düzenle / Sil</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-black/5 dark:divide-white/5 font-mono tabular-nums">
-                {filteredQuestionRecords.map(rec => {
-                  const rowKey = `${rec.kind}_${rec.rawId}`;
-                  const qTotal = rec.correct + rec.wrong + rec.blank;
-                  return (
-                    <tr key={rowKey} className="hover:bg-neutral-50/60 dark:hover:bg-neutral-800/30">
-                      <td className="py-2.5 pr-3 text-neutral-400 whitespace-nowrap">
-                        {rec.dateLabel}
-                      </td>
-                      <td className="py-2.5 px-3 font-sans">
-                        <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 font-bold text-[11px]">
-                          {rec.subject}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 font-sans font-medium text-neutral-900 dark:text-white">
-                        {rec.topic}
-                        {rec.note && (
-                          <span className="block text-[10px] text-neutral-400 italic truncate max-w-xs">
-                            "{rec.note}"
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-right text-neutral-600 dark:text-neutral-300 whitespace-nowrap">
-                        {rec.durationMinutes > 0 ? `${rec.durationMinutes} dk` : '-'}
-                      </td>
-                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        <span className="font-bold text-neutral-900 dark:text-white">{qTotal} Soru</span>
-                        <span className="text-neutral-500 ml-1.5">
-                          ({rec.correct}D / {rec.wrong}Y / {rec.blank}B)
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-extrabold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                        {rec.net} Net
-                      </td>
-                      <td className="py-2.5 pl-3 text-right font-sans whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenEditQuestionRecordModal(rec)}
-                            className="px-2 py-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-blue-500/15 text-neutral-600 dark:text-neutral-300 hover:text-blue-600 dark:hover:text-blue-400 text-[11px] font-bold inline-flex items-center gap-1 transition-colors cursor-pointer"
-                          >
-                            <Edit2 className="w-3 h-3" />
-                            <span>Düzenle</span>
-                          </button>
-
-                          {confirmDeleteQuestionKey === rowKey ? (
-                            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-[11px]">
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteQuestionRecord(rec)}
-                                className="font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
-                              >
-                                Sil
-                              </button>
-                              <span className="text-neutral-300 dark:text-neutral-600">|</span>
-                              <button
-                                type="button"
-                                onClick={() => setConfirmDeleteQuestionKey(null)}
-                                className="font-semibold text-neutral-500 cursor-pointer"
-                              >
-                                Vazgeç
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteQuestionKey(rowKey)}
-                              className="p-1.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-rose-500/15 text-neutral-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer"
-                              title="Soru Kaydını Sil"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </td>
+            {filteredExamSubjectRows.length === 0 ? (
+              <div className="py-8 text-center text-xs text-neutral-400">
+                Henüz kayıtlı deneme sınavı bölümü bulunmuyor.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="text-neutral-400 border-b border-black/5 dark:border-white/5 font-semibold">
+                      <th className="py-2.5 pr-3">Ders Değişkeni</th>
+                      <th className="py-2.5 px-3 text-right">Deneme Sayısı</th>
+                      <th className="py-2.5 px-3 text-right">Toplam Soru (D / Y / B)</th>
+                      <th className="py-2.5 px-3 text-right">Ortalama Net</th>
+                      <th className="py-2.5 px-3 text-right">Toplam Net</th>
+                      <th className="py-2.5 pl-3 text-right">Deneme Başarı %</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* RED ALERT ENGINE: KRONİK HATA TESPİT MOTORU */}
-      {chronicErrors.length > 0 && (
-        <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-rose-500/10 via-amber-500/5 to-transparent border-2 border-rose-500/30 shadow-lg shadow-rose-500/5">
-          <div className="flex items-start sm:items-center justify-between flex-col sm:flex-row gap-3 mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-md shadow-rose-500/30 shrink-0">
-                <AlertTriangle className="w-6 h-6" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-rose-500 text-white">
-                    Akıllı Uyarı Sistemi
-                  </span>
-                  <h2 className="text-base sm:text-lg font-extrabold text-neutral-900 dark:text-white">
-                    Kronik Hata ve Konu Eksikleri Tespit Edildi!
-                  </h2>
-                </div>
-                <p className="text-xs text-neutral-600 dark:text-neutral-300 mt-0.5">
-                  Aşağıdaki konularda birden fazla deneme sınavında tekrarlayan yanlışlar bulundu. Tek tıkla telafi ataması yapabilirsiniz.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {chronicErrors.map((err, idx) => (
-              <div
-                key={idx}
-                className="p-4 rounded-2xl bg-white/90 dark:bg-[#1C1C1E]/90 backdrop-blur-md border border-rose-500/20 flex flex-col justify-between gap-3 shadow-xs"
-              >
-                <div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold px-2.5 py-0.5 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400">
-                      {err.subject}
-                    </span>
-                    <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400 font-mono">
-                      {err.examOccurrences} Denemede • Toplam {err.totalErrors} Yanlış
-                    </span>
-                  </div>
-
-                  <h3 className="text-base font-extrabold text-neutral-900 dark:text-white mt-2">
-                    {err.topic}
-                  </h3>
-
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {Object.entries(err.reasons).map(([rName, count]) => (
-                      <span
-                        key={rName}
-                        className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300"
-                      >
-                        {rName}: <strong>{count} soru</strong>
-                      </span>
+                  </thead>
+                  <tbody className="divide-y divide-black/5 dark:divide-white/5 font-mono tabular-nums">
+                    {filteredExamSubjectRows.map(row => (
+                      <tr key={row.subject} className="hover:bg-neutral-50 dark:hover:bg-neutral-800/40">
+                        <td className="py-3 pr-3 font-sans font-bold text-neutral-900 dark:text-white">
+                          {row.subject}
+                          {row.topics.length > 0 && (
+                            <span className="block text-[10px] font-normal text-rose-500 truncate max-w-xs">
+                              Hata Konuları: {row.topics.join(', ')}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 text-right text-neutral-600 dark:text-neutral-300">
+                          {row.examCount} Deneme
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          <span className="font-bold text-neutral-900 dark:text-white">{row.totalQuestions}</span>
+                          <span className="text-neutral-500 ml-1">
+                            ({row.correct}D / {row.wrong}Y / {row.blank}B)
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-right font-extrabold text-blue-600 dark:text-blue-400">
+                          {row.avgNet} Net
+                        </td>
+                        <td className="py-3 px-3 text-right font-bold text-indigo-600 dark:text-indigo-400">
+                          {row.totalNet} Net
+                        </td>
+                        <td className="py-3 pl-3 text-right">
+                          <span className={`px-2 py-0.5 rounded-lg font-bold text-xs ${
+                            row.accuracy >= 75
+                              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                              : row.accuracy >= 50
+                              ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                              : 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                          }`}>
+                            %{row.accuracy}
+                          </span>
+                        </td>
+                      </tr>
                     ))}
-                  </div>
-                </div>
-
-                {role === 'teacher' ? (
-                  <div className="flex items-center gap-2 pt-2 border-t border-black/5 dark:border-white/5">
-                    <button
-                      onClick={() =>
-                        setRedAlertActionModal({
-                          isOpen: true,
-                          subject: err.subject,
-                          topic: err.topic,
-                          targetType: 'schedule'
-                        })
-                      }
-                      className="flex-1 py-2 px-3 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer"
-                    >
-                      <Calendar className="w-3.5 h-3.5" />
-                      <span>Programa Etüt Ekle</span>
-                    </button>
-                    <button
-                      onClick={() =>
-                        setRedAlertActionModal({
-                          isOpen: true,
-                          subject: err.subject,
-                          topic: err.topic,
-                          targetType: 'homework'
-                        })
-                      }
-                      className="flex-1 py-2 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-200 text-white dark:text-neutral-900 font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer"
-                    >
-                      <BookOpen className="w-3.5 h-3.5" />
-                      <span>Telafi Ödevi Ata</span>
-                    </button>
-                  </div>
-                ) : (
-                  <div className="pt-2 border-t border-black/5 dark:border-white/5 flex items-center justify-between text-[11px] text-rose-600 dark:text-rose-400 font-semibold">
-                    <span>Öncelikli tekrar edilmesi gereken konu</span>
-                    <Sparkles className="w-3.5 h-3.5" />
-                  </div>
-                )}
+                  </tbody>
+                </table>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Charts Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Net Progression Area Chart */}
-        <div className="lg:col-span-7 p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-base font-bold text-neutral-900 dark:text-white flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-blue-500" />
-                <span>Deneme Net Gelişim Grafiği</span>
-              </h3>
-              <p className="text-xs text-neutral-500">Son denemelerdeki toplam net ivmesi</p>
-            </div>
+            )}
           </div>
 
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={netProgressionData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorNet" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#007AFF" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="#007AFF" stopOpacity={0.0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} domain={['auto', 'auto']} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#1C1C1E',
-                    borderColor: 'rgba(255,255,255,0.1)',
-                    borderRadius: '16px',
-                    color: '#fff',
-                    fontSize: '12px'
-                  }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="net"
-                  name="Toplam Net"
-                  stroke="#007AFF"
-                  strokeWidth={3}
-                  fillOpacity={1}
-                  fill="url(#colorNet)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Error Reasons Distribution */}
-        <div className="lg:col-span-5 p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs flex flex-col justify-between">
-          <div className="mb-4">
-            <h3 className="text-base font-bold text-neutral-900 dark:text-white flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-rose-500" />
-              <span>Neden Yanlış Yapıyorum?</span>
-            </h3>
-            <p className="text-xs text-neutral-500">Etiketlenen hataların kök neden dağılımı</p>
-          </div>
-
-          {errorDistributionData.length === 0 ? (
-            <div className="h-64 flex items-center justify-center text-xs text-neutral-400">
-              Henüz hata etiketi verisi bulunmuyor.
-            </div>
-          ) : (
-            <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={errorDistributionData}
-                  layout="vertical"
-                  margin={{ top: 5, right: 20, left: 20, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.12} horizontal={false} />
-                  <XAxis type="number" tick={{ fontSize: 11 }} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={100} />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: '#1C1C1E',
-                      borderColor: 'rgba(255,255,255,0.1)',
-                      borderRadius: '14px',
-                      color: '#fff',
-                      fontSize: '12px'
-                    }}
-                  />
-                  <Bar dataKey="value" name="Yanlış Soru Sayısı" radius={[0, 8, 8, 0]} barSize={20} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Exam History List (with Edit & Delete) */}
-      <div className="space-y-3">
-        <h3 className="text-base font-bold text-neutral-900 dark:text-white px-1">
-          Kayıtlı Deneme Sınavları ({studentExams.length})
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {[...studentExams].reverse().map(exam => (
-            <div
-              key={exam.id}
-              className="p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs space-y-4"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                    {exam.examType}
-                  </span>
-                  <h4 className="text-base font-bold text-neutral-900 dark:text-white mt-1">
-                    {exam.title}
-                  </h4>
-                  <span className="text-xs text-neutral-400">
-                    {new Date(exam.date).toLocaleDateString('tr-TR', {
-                      day: 'numeric',
-                      month: 'long',
-                      year: 'numeric'
-                    })}
-                  </span>
-                </div>
-
-                <div className="flex items-start gap-2">
-                  <div className="text-right px-3 py-1.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20">
-                    <div className="text-[10px] uppercase font-bold text-emerald-600 dark:text-emerald-400">
-                      Toplam Net
-                    </div>
-                    <div className="text-xl font-black text-emerald-600 dark:text-emerald-400 font-mono">
-                      {exam.totalNet}
-                    </div>
+          {/* RED ALERT ENGINE: KRONİK HATA TESPİT MOTORU */}
+          {chronicErrors.length > 0 && (
+            <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-rose-500/10 via-amber-500/5 to-transparent border-2 border-rose-500/30 shadow-lg shadow-rose-500/5">
+              <div className="flex items-start sm:items-center justify-between flex-col sm:flex-row gap-3 mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-md shadow-rose-500/30 shrink-0">
+                    <AlertTriangle className="w-6 h-6" />
                   </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-rose-500 text-white">
+                        Akıllı Uyarı Sistemi
+                      </span>
+                      <h2 className="text-base sm:text-lg font-extrabold text-neutral-900 dark:text-white">
+                        Kronik Hata ve Konu Eksikleri Tespit Edildi!
+                      </h2>
+                    </div>
+                    <p className="text-xs text-neutral-600 dark:text-neutral-300 mt-0.5">
+                      Aşağıdaki konularda birden fazla deneme sınavında tekrarlayan yanlışlar bulundu. Tek tıkla telafi ataması yapabilirsiniz.
+                    </p>
+                  </div>
+                </div>
+              </div>
 
-                  <div className="flex flex-col gap-1">
-                    <button
-                      type="button"
-                      onClick={() => handleOpenEditExamModal(exam)}
-                      className="p-2 rounded-xl text-neutral-500 hover:text-blue-600 hover:bg-blue-500/10 transition-colors cursor-pointer"
-                      title="Deneme Sınavını Düzenle"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {chronicErrors.map((err, idx) => (
+                  <div
+                    key={idx}
+                    className="p-4 rounded-2xl bg-white/90 dark:bg-[#1C1C1E]/90 backdrop-blur-md border border-rose-500/20 flex flex-col justify-between gap-3 shadow-xs"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold px-2.5 py-0.5 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                          {err.subject}
+                        </span>
+                        <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400 font-mono">
+                          {err.examOccurrences} Denemede • Toplam {err.totalErrors} Yanlış
+                        </span>
+                      </div>
 
-                    {confirmDeleteExamId === exam.id ? (
-                      <div className="flex flex-col gap-1 bg-rose-500/10 p-1.5 rounded-xl border border-rose-500/30 text-[10px]">
+                      <h3 className="text-base font-extrabold text-neutral-900 dark:text-white mt-2">
+                        {err.topic}
+                      </h3>
+
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {Object.entries(err.reasons).map(([rName, count]) => (
+                          <span
+                            key={rName}
+                            className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300"
+                          >
+                            {rName}: <strong>{count} soru</strong>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {role === 'teacher' ? (
+                      <div className="flex items-center gap-2 pt-2 border-t border-black/5 dark:border-white/5">
                         <button
-                          type="button"
-                          onClick={() => {
-                            deleteTrialExam(exam.id);
-                            setConfirmDeleteExamId(null);
-                            showNotice('Deneme sınavı silindi.');
-                          }}
-                          className="font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+                          onClick={() =>
+                            setRedAlertActionModal({
+                              isOpen: true,
+                              subject: err.subject,
+                              topic: err.topic,
+                              targetType: 'schedule'
+                            })
+                          }
+                          className="flex-1 py-2 px-3 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer"
                         >
-                          Sil
+                          <Calendar className="w-3.5 h-3.5" />
+                          <span>Programa Etüt Ekle</span>
                         </button>
                         <button
-                          type="button"
-                          onClick={() => setConfirmDeleteExamId(null)}
-                          className="font-semibold text-neutral-500 cursor-pointer"
+                          onClick={() =>
+                            setRedAlertActionModal({
+                              isOpen: true,
+                              subject: err.subject,
+                              topic: err.topic,
+                              targetType: 'homework'
+                            })
+                          }
+                          className="flex-1 py-2 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-200 text-white dark:text-neutral-900 font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer"
                         >
-                          İptal
+                          <BookOpen className="w-3.5 h-3.5" />
+                          <span>Telafi Ödevi Ata</span>
                         </button>
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDeleteExamId(exam.id)}
-                        className="p-2 rounded-xl text-neutral-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
-                        title="Deneme Sınavını Sil"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="pt-2 border-t border-black/5 dark:border-white/5 flex items-center justify-between text-[11px] text-rose-600 dark:text-rose-400 font-semibold">
+                        <span>Öncelikli tekrar edilmesi gereken konu</span>
+                        <Sparkles className="w-3.5 h-3.5" />
+                      </div>
                     )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Section pills */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {exam.sections.map((sec, i) => (
-                  <div
-                    key={i}
-                    className="p-2.5 rounded-2xl bg-neutral-50 dark:bg-neutral-800/60 border border-black/5 dark:border-white/5"
-                  >
-                    <div className="text-[10px] font-semibold text-neutral-500 dark:text-neutral-400 truncate">
-                      {normalizeSubjectName(sec.name)}
-                    </div>
-                    <div className="text-sm font-extrabold text-neutral-900 dark:text-white font-mono mt-0.5">
-                      {sec.net} Net
-                    </div>
-                    <div className="text-[10px] text-neutral-400 font-mono">
-                      {sec.correct}D / {sec.wrong}Y
-                    </div>
                   </div>
                 ))}
               </div>
+            </div>
+          )}
 
-              {/* Error Tags */}
-              {(exam.errorTags || []).length > 0 && (
-                <div className="pt-2 border-t border-black/5 dark:border-white/5">
-                  <div className="text-[11px] font-semibold text-neutral-400 mb-1.5">
-                    Kaydedilen Hata Etiketleri:
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(exam.errorTags || []).map((t, i) => (
-                      <span
-                        key={i}
-                        className="text-[11px] px-2.5 py-1 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 font-medium"
-                      >
-                        {normalizeSubjectName(t.subject)} • <strong>{t.topic}</strong> ({ERROR_LABELS[t.reason] || t.reason} - {t.count})
-                      </span>
-                    ))}
-                  </div>
+          {/* Charts Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Net Progression Area Chart */}
+            <div className="lg:col-span-7 p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-base font-bold text-neutral-900 dark:text-white flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-blue-500" />
+                    <span>Deneme Net Gelişim Grafiği</span>
+                  </h3>
+                  <p className="text-xs text-neutral-500">Son denemelerdeki toplam net ivmesi</p>
+                </div>
+              </div>
+
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={netProgressionData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorNet" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#007AFF" stopOpacity={0.35} />
+                        <stop offset="95%" stopColor="#007AFF" stopOpacity={0.0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                    <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} domain={['auto', 'auto']} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#1C1C1E',
+                        borderColor: 'rgba(255,255,255,0.1)',
+                        borderRadius: '16px',
+                        color: '#fff',
+                        fontSize: '12px'
+                      }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="net"
+                      name="Toplam Net"
+                      stroke="#007AFF"
+                      strokeWidth={3}
+                      fillOpacity={1}
+                      fill="url(#colorNet)"
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Error Reasons Distribution */}
+            <div className="lg:col-span-5 p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs flex flex-col justify-between">
+              <div className="mb-4">
+                <h3 className="text-base font-bold text-neutral-900 dark:text-white flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4 text-rose-500" />
+                  <span>Neden Yanlış Yapıyorum?</span>
+                </h3>
+                <p className="text-xs text-neutral-500">Etiketlenen hataların kök neden dağılımı</p>
+              </div>
+
+              {errorDistributionData.length === 0 ? (
+                <div className="h-64 flex items-center justify-center text-xs text-neutral-400">
+                  Henüz hata etiketi verisi bulunmuyor.
+                </div>
+              ) : (
+                <div className="h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={errorDistributionData}
+                      layout="vertical"
+                      margin={{ top: 5, right: 20, left: 20, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.12} horizontal={false} />
+                      <XAxis type="number" tick={{ fontSize: 11 }} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={100} />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: '#1C1C1E',
+                          borderColor: 'rgba(255,255,255,0.1)',
+                          borderRadius: '14px',
+                          color: '#fff',
+                          fontSize: '12px'
+                        }}
+                      />
+                      <Bar dataKey="value" name="Yanlış Soru Sayısı" radius={[0, 8, 8, 0]} barSize={20} />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
               )}
             </div>
-          ))}
+          </div>
+
+          {/* Exam History List (with Edit & Delete) */}
+          <div className="space-y-3">
+            <h3 className="text-base font-bold text-neutral-900 dark:text-white px-1">
+              Kayıtlı Deneme Sınavları ({studentExams.length})
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[...studentExams].reverse().map(exam => (
+                <div
+                  key={exam.id}
+                  className="p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs space-y-4"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                        {exam.examType}
+                      </span>
+                      <h4 className="text-base font-bold text-neutral-900 dark:text-white mt-1">
+                        {exam.title}
+                      </h4>
+                      <span className="text-xs text-neutral-400">
+                        {new Date(exam.date).toLocaleDateString('tr-TR', {
+                          day: 'numeric',
+                          month: 'long',
+                          year: 'numeric'
+                        })}
+                      </span>
+                    </div>
+
+                    <div className="flex items-start gap-2">
+                      <div className="text-right px-3 py-1.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20">
+                        <div className="text-[10px] uppercase font-bold text-emerald-600 dark:text-emerald-400">
+                          Toplam Net
+                        </div>
+                        <div className="text-xl font-black text-emerald-600 dark:text-emerald-400 font-mono">
+                          {exam.totalNet}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditExamModal(exam)}
+                          className="p-2 rounded-xl text-neutral-500 hover:text-blue-600 hover:bg-blue-500/10 transition-colors cursor-pointer"
+                          title="Deneme Sınavını Düzenle"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+
+                        {confirmDeleteExamId === exam.id ? (
+                          <div className="flex flex-col gap-1 bg-rose-500/10 p-1.5 rounded-xl border border-rose-500/30 text-[10px]">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                deleteTrialExam(exam.id);
+                                setConfirmDeleteExamId(null);
+                                showNotice('Deneme sınavı silindi.');
+                              }}
+                              className="font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+                            >
+                              Sil
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteExamId(null)}
+                              className="font-semibold text-neutral-500 cursor-pointer"
+                            >
+                              İptal
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteExamId(exam.id)}
+                            className="p-2 rounded-xl text-neutral-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                            title="Deneme Sınavını Sil"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section pills */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {exam.sections.map((sec, i) => (
+                      <div
+                        key={i}
+                        className="p-2.5 rounded-2xl bg-neutral-50 dark:bg-neutral-800/60 border border-black/5 dark:border-white/5"
+                      >
+                        <div className="text-[10px] font-semibold text-neutral-500 dark:text-neutral-400 truncate">
+                          {normalizeSubjectName(sec.name)}
+                        </div>
+                        <div className="text-sm font-extrabold text-neutral-900 dark:text-white font-mono mt-0.5">
+                          {sec.net} Net
+                        </div>
+                        <div className="text-[10px] text-neutral-400 font-mono">
+                          {sec.correct}D / {sec.wrong}Y
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Error Tags */}
+                  {(exam.errorTags || []).length > 0 && (
+                    <div className="pt-2 border-t border-black/5 dark:border-white/5">
+                      <div className="text-[11px] font-semibold text-neutral-400 mb-1.5">
+                        Kaydedilen Hata Etiketleri:
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(exam.errorTags || []).map((t, i) => (
+                          <span
+                            key={i}
+                            className="text-[11px] px-2.5 py-1 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 font-medium"
+                          >
+                            {normalizeSubjectName(t.subject)} • <strong>{t.topic}</strong> ({ERROR_LABELS[t.reason] || t.reason} - {t.count})
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
-      </div>
+      ) : (
+        /* =====================================================================
+           TAB 2: SORU ÇÖZÜM & DERS ANALİZİ (AYRI GÖRÜNÜM)
+           ===================================================================== */
+        <div className="space-y-6">
+          {/* Soru Çözüm KPI Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs">
+              <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Toplam Çözülen Soru</span>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-2xl sm:text-3xl font-black text-neutral-900 dark:text-white font-mono">
+                  {questionKpis.totalQuestions}
+                </span>
+                <span className="text-xs font-semibold text-emerald-500">Soru</span>
+              </div>
+              <p className="text-[11px] text-neutral-400 mt-1">
+                {studentQuestionRecords.length} soru çözüm kaydından
+              </p>
+            </div>
+
+            <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs">
+              <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Toplam Soru Neti</span>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-2xl sm:text-3xl font-black text-emerald-600 dark:text-emerald-400 font-mono">
+                  {questionKpis.totalNet}
+                </span>
+                <span className="text-xs font-semibold text-emerald-500">Net</span>
+              </div>
+              <p className="text-[11px] text-neutral-400 mt-1">
+                {questionKpis.totalCorrect} doğru çözüm
+              </p>
+            </div>
+
+            <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs">
+              <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Genel Başarı Oranı</span>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-2xl sm:text-3xl font-black text-blue-600 dark:text-blue-400 font-mono">
+                  %{questionKpis.overallAccuracy}
+                </span>
+              </div>
+              <p className="text-[11px] text-neutral-400 mt-1">
+                Çözülen tüm ders soruları
+              </p>
+            </div>
+
+            <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs">
+              <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Toplam Çalışma Süresi</span>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-2xl sm:text-3xl font-black text-indigo-600 dark:text-indigo-400 font-mono">
+                  {questionKpis.totalMinutes}
+                </span>
+                <span className="text-xs font-semibold text-indigo-500">dk</span>
+              </div>
+              <p className="text-[11px] text-neutral-400 mt-1">
+                ({(questionKpis.totalMinutes / 60).toFixed(1)} saat odak & ders)
+              </p>
+            </div>
+          </div>
+
+          {/* DERS DEĞİŞKENİ BAZLI SORU ÇÖZÜM ANALİZİ */}
+          <div className="p-5 sm:p-6 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 shadow-xs space-y-5">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-4 border-b border-black/5 dark:border-white/5">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                  <Target className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base sm:text-lg font-extrabold text-neutral-900 dark:text-white">
+                    Ders Değişkeni Bazlı Soru Çözüm Analizi
+                  </h2>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                    Odak modu, haftalık program ve ödevlerde çözülen soruların ders değişkenlerine göre başarı ve süre dağılımı.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                {isAddingSubjectVar ? (
+                  <div className="flex items-center gap-1.5 bg-neutral-100 dark:bg-neutral-800 p-1.5 rounded-xl border border-blue-500/30">
+                    <input
+                      type="text"
+                      value={newSubjectVarDraft}
+                      onChange={e => setNewSubjectVarDraft(e.target.value)}
+                      placeholder="Yeni ders değişkeni..."
+                      className="px-2.5 py-1 rounded-lg bg-white dark:bg-neutral-900 text-xs font-bold text-neutral-900 dark:text-white focus:outline-none"
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (newSubjectVarDraft.trim()) {
+                          const norm = normalizeSubjectName(newSubjectVarDraft.trim());
+                          addSubjectVariable(norm);
+                          setSelectedQuestionSubjectFilter(norm);
+                          setNewSubjectVarDraft('');
+                          setIsAddingSubjectVar(false);
+                          showNotice(`"${norm}" ders değişkeni olarak eklendi.`);
+                        }
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-blue-600 text-white text-xs font-bold cursor-pointer"
+                    >
+                      Ekle
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAddingSubjectVar(false);
+                        setNewSubjectVarDraft('');
+                      }}
+                      className="px-2 py-1 rounded-lg text-xs font-semibold text-neutral-500 cursor-pointer"
+                    >
+                      İptal
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingSubjectVar(true)}
+                    className="px-3 py-2 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Yeni Ders Değişkeni Tanımla</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Shared Subject Variable Filter Bar */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+              <button
+                type="button"
+                onClick={() => setSelectedQuestionSubjectFilter('ALL')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                  selectedQuestionSubjectFilter === 'ALL'
+                    ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                    : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700'
+                }`}
+              >
+                Tüm Dersler ({questionSubjectAnalysis.length})
+              </button>
+
+              {subjects.map(subj => {
+                const stat = questionSubjectAnalysis.find(s => s.subject === subj);
+                const isSelected = selectedQuestionSubjectFilter === subj;
+                return (
+                  <button
+                    key={subj}
+                    type="button"
+                    onClick={() => setSelectedQuestionSubjectFilter(isSelected ? 'ALL' : subj)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                      isSelected
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700'
+                    }`}
+                  >
+                    <span>{subj}</span>
+                    {stat && stat.totalQuestions > 0 && (
+                      <span className={`font-mono text-[10px] ${isSelected ? 'text-white/90' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                        · {stat.totalQuestions}S
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Question Solving Subject Chart */}
+            {filteredQuestionSubjectRows.length > 0 && (
+              <div className="h-60 w-full pt-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={filteredQuestionSubjectRows}
+                    margin={{ top: 10, right: 20, left: 0, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.12} />
+                    <XAxis dataKey="subject" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#1C1C1E',
+                        borderColor: 'rgba(255,255,255,0.1)',
+                        borderRadius: '14px',
+                        color: '#fff',
+                        fontSize: '12px'
+                      }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: '12px' }} />
+                    <Bar
+                      dataKey="totalQuestions"
+                      name="Çözülen Soru Sayısı"
+                      fill="#007AFF"
+                      radius={[6, 6, 0, 0]}
+                      barSize={22}
+                    />
+                    <Bar
+                      dataKey="accuracy"
+                      name="Başarı Yüzdesi (%)"
+                      fill="#34C759"
+                      radius={[6, 6, 0, 0]}
+                      barSize={22}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Question Solving Subject Table */}
+            {filteredQuestionSubjectRows.length === 0 ? (
+              <div className="py-8 text-center text-xs text-neutral-400">
+                Seçili ders değişkeni için henüz soru çözümü kaydı bulunmuyor.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="text-neutral-400 border-b border-black/5 dark:border-white/5 font-semibold">
+                      <th className="py-2.5 pr-3">Ders Değişkeni</th>
+                      <th className="py-2.5 px-3 text-right">Çalışma Kaydı</th>
+                      <th className="py-2.5 px-3 text-right">Çözülen Soru (D / Y / B)</th>
+                      <th className="py-2.5 px-3 text-right">Toplam Net</th>
+                      <th className="py-2.5 px-3 text-right">Çalışma Süresi</th>
+                      <th className="py-2.5 pl-3 text-right">Başarı %</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-black/5 dark:divide-white/5 font-mono tabular-nums">
+                    {filteredQuestionSubjectRows.map(row => (
+                      <tr
+                        key={row.subject}
+                        onClick={() =>
+                          setSelectedQuestionSubjectFilter(prev => (prev === row.subject ? 'ALL' : row.subject))
+                        }
+                        className={`cursor-pointer transition-colors ${
+                          selectedQuestionSubjectFilter === row.subject
+                            ? 'bg-emerald-500/10'
+                            : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/40'
+                        }`}
+                      >
+                        <td className="py-3 pr-3 font-sans">
+                          <div className="font-bold text-neutral-900 dark:text-white">
+                            {row.subject}
+                          </div>
+                          {row.topics.length > 0 && (
+                            <div className="text-[10px] text-neutral-400 truncate max-w-xs">
+                              Konular: {row.topics.join(', ')}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 text-right text-neutral-600 dark:text-neutral-300">
+                          {row.recordCount} Kayıt
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          <span className="font-bold text-neutral-900 dark:text-white">
+                            {row.totalQuestions}
+                          </span>
+                          <span className="text-[11px] text-neutral-500 ml-1">
+                            ({row.correct}D / {row.wrong}Y / {row.blank}B)
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-right font-extrabold text-emerald-600 dark:text-emerald-400">
+                          {row.totalNet} Net
+                        </td>
+                        <td className="py-3 px-3 text-right text-neutral-600 dark:text-neutral-300">
+                          {row.durationMinutes > 0 ? `${row.durationMinutes} dk` : '-'}
+                        </td>
+                        <td className="py-3 pl-3 text-right">
+                          <span className={`px-2 py-0.5 rounded-lg font-bold text-xs ${
+                            row.accuracy >= 75
+                              ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                              : row.accuracy >= 50
+                              ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                              : 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                          }`}>
+                            %{row.accuracy}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* SORU VE ÇALIŞMA KAYITLARI YÖNETİMİ (EN YENİDEN EN ESKİYE SIRALI • DÜZENLE & SİL) */}
+          <div className="p-5 sm:p-6 rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-black/5 dark:border-white/5">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold text-neutral-900 dark:text-white">
+                    Soru Çözüm Geçmişi ({selectedQuestionSubjectFilter === 'ALL' ? 'Tüm Dersler' : selectedQuestionSubjectFilter})
+                  </h2>
+                  <span className="px-2 py-0.5 rounded-md bg-neutral-100 dark:bg-neutral-800 text-[10px] font-semibold text-neutral-500 dark:text-neutral-400">
+                    En Yeniden En Eskiye
+                  </span>
+                </div>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                  En yeni kayıtlar en üstte yer alır. Soru kayıtlarını düzenleyebilir veya silebilirsiniz.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleOpenNewQuestionRecordModal(selectedQuestionSubjectFilter)}
+                className="px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Yeni Soru Kaydı Ekle</span>
+              </button>
+            </div>
+
+            {filteredQuestionRecords.length === 0 ? (
+              <div className="py-8 text-center text-xs text-neutral-400">
+                Bu ders değişkeni için henüz soru çözümü kaydı bulunmuyor.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="text-neutral-400 border-b border-black/5 dark:border-white/5 font-semibold">
+                      <th className="py-2 pr-3">Tarih</th>
+                      <th className="py-2 px-3">Ders Değişkeni</th>
+                      <th className="py-2 px-3">Konu</th>
+                      <th className="py-2 px-3 text-right">Süre</th>
+                      <th className="py-2 px-3 text-right">Doğru / Yanlış / Boş</th>
+                      <th className="py-2 px-3 text-right">Net</th>
+                      <th className="py-2 pl-3 text-right">Düzenle / Sil</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-black/5 dark:divide-white/5 font-mono tabular-nums">
+                    {filteredQuestionRecords.map(rec => {
+                      const rowKey = `${rec.kind}_${rec.rawId}`;
+                      const qTotal = rec.correct + rec.wrong + rec.blank;
+                      return (
+                        <tr key={rowKey} className="hover:bg-neutral-50/60 dark:hover:bg-neutral-800/30">
+                          <td className="py-2.5 pr-3 text-neutral-400 whitespace-nowrap">
+                            {rec.dateLabel}
+                          </td>
+                          <td className="py-2.5 px-3 font-sans">
+                            <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 font-bold text-[11px]">
+                              {rec.subject}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 font-sans font-medium text-neutral-900 dark:text-white">
+                            {rec.topic}
+                            {rec.note && (
+                              <span className="block text-[10px] text-neutral-400 italic truncate max-w-xs">
+                                "{rec.note}"
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-right text-neutral-600 dark:text-neutral-300 whitespace-nowrap">
+                            {rec.durationMinutes > 0 ? `${rec.durationMinutes} dk` : '-'}
+                          </td>
+                          <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                            <span className="font-bold text-neutral-900 dark:text-white">{qTotal} Soru</span>
+                            <span className="text-neutral-500 ml-1.5">
+                              ({rec.correct}D / {rec.wrong}Y / {rec.blank}B)
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-extrabold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                            {rec.net} Net
+                          </td>
+                          <td className="py-2.5 pl-3 text-right font-sans whitespace-nowrap">
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditQuestionRecordModal(rec)}
+                                className="px-2 py-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-blue-500/15 text-neutral-600 dark:text-neutral-300 hover:text-blue-600 dark:hover:text-blue-400 text-[11px] font-bold inline-flex items-center gap-1 transition-colors cursor-pointer"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                                <span>Düzenle</span>
+                              </button>
+
+                              {confirmDeleteQuestionKey === rowKey ? (
+                                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-[11px]">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteQuestionRecord(rec)}
+                                    className="font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+                                  >
+                                    Sil
+                                  </button>
+                                  <span className="text-neutral-300 dark:text-neutral-600">|</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteQuestionKey(null)}
+                                    className="font-semibold text-neutral-500 cursor-pointer"
+                                  >
+                                    Vazgeç
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteQuestionKey(rowKey)}
+                                  className="p-1.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-rose-500/15 text-neutral-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer"
+                                  title="Soru Kaydını Sil"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* MODAL 1: ADD / EDIT QUESTION RECORD */}
       {isQuestionModalOpen && (
@@ -1588,7 +1819,7 @@ export const TrialAnalysisView: React.FC = () => {
                   {editingQuestionRecord ? 'Soru Kaydını Düzenle' : 'Yeni Soru Kaydı Ekle'}
                 </h3>
                 <p className="text-xs text-neutral-500">
-                  Seçilen ders değişkeni üzerinden denemelerle ortak analiz edilir
+                  Seçilen ders değişkeni üzerinden Soru & Ders Analizine kaydedilir
                 </p>
               </div>
               <button
@@ -1845,7 +2076,7 @@ export const TrialAnalysisView: React.FC = () => {
                   {editingExamId ? 'Deneme Sınavı Sonucunu Düzenle' : 'Yeni Deneme Sınavı Sonucu Gir'}
                 </h3>
                 <p className="text-xs text-neutral-500">
-                  Bölüm dersleri ortak ders değişkenleriyle eşleştirilir; D/Y girildiğinde net otomatik hesaplanır
+                  Bölüm dersleri ders değişkenleriyle eşleştirilir; D/Y girildiğinde net otomatik hesaplanır
                 </p>
               </div>
               <div className="text-right px-3 py-1 rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
@@ -1898,7 +2129,7 @@ export const TrialAnalysisView: React.FC = () => {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="block font-bold text-neutral-700 dark:text-neutral-300">
-                    Ders Bazlı Doğru / Yanlış / Boş (Ortak Ders Değişkenleri)
+                    Ders Bazlı Doğru / Yanlış / Boş (Ders Değişkenleri)
                   </label>
                   <button
                     type="button"
