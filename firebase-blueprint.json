@@ -77,6 +77,8 @@
         "actualDurationMinutes": { "type": "number" },
         "solvedQuestions": { "type": "object" },
         "teacherNote": { "type": "string" },
+        "customColor": { "type": "string" },
+        "weekNumber": { "type": "number" },
         "status": { "type": "string" },
         "updatedAt": { "type": "string" }
       },

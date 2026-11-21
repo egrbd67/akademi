@@ -29,12 +29,13 @@ import {
   Check,
   Circle,
   ClipboardPaste,
+  Palette,
   X
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ScheduleItem } from '../../types';
 import { exportScheduleToExcel, copyScheduleForGoogleSheets, DAY_NAMES, getSubjectColor } from '../../utils/excelExport';
-import { BOX_THEMES } from '../theme/ThemeCustomizerModal';
+import { BOX_THEMES, getActiveBoxTheme } from '../theme/ThemeCustomizerModal';
 import { LeaderboardCard } from '../leaderboard/LeaderboardCard';
 import { normalizeSubjectName } from '../../constants/subjects';
 
@@ -50,6 +51,38 @@ const DAYS = [
 ];
 
 const SCHEDULE_WEEK_MEMORY_KEY = 'akademi_takip_firebase_v1_schedule_week_memory';
+
+function hslToHex(h: number, s: number, l: number): string {
+  const sNorm = s / 100;
+  const lNorm = l / 100;
+  const c = (1 - Math.abs(2 * lNorm - 1)) * sNorm;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = lNorm - c / 2;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+
+  if (h >= 0 && h < 60) {
+    r = c; g = x; b = 0;
+  } else if (h >= 60 && h < 120) {
+    r = x; g = c; b = 0;
+  } else if (h >= 120 && h < 180) {
+    r = 0; g = c; b = x;
+  } else if (h >= 180 && h < 240) {
+    r = 0; g = x; b = c;
+  } else if (h >= 240 && h < 300) {
+    r = x; g = 0; b = c;
+  } else {
+    r = c; g = 0; b = x;
+  }
+
+  const toHex = (n: number) =>
+    Math.round((n + m) * 255)
+      .toString(16)
+      .padStart(2, '0');
+
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
+}
 
 interface CalendarWeekBounds {
   mondayKey: string;
@@ -180,10 +213,13 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
     addSubjectVariable,
     startTimer,
     targetDaysLeft,
-    boxTheme
+    boxTheme,
+    setBoxTheme
   } = useApp();
 
-  const selectedBoxTheme = BOX_THEMES.find(b => b.id === boxTheme) || BOX_THEMES[0];
+  const selectedBoxTheme = getActiveBoxTheme(boxTheme);
+  const [isBoxColorPickerOpen, setIsBoxColorPickerOpen] = useState(false);
+  const [colorPickerTargetItem, setColorPickerTargetItem] = useState<ScheduleItem | null>(null);
 
   // Today Day of Week computation (1 = Pazartesi, 2 = Salı, ..., 7 = Pazar)
   const [weekBounds, setWeekBounds] = useState<CalendarWeekBounds>(() => getCalendarWeekBounds());
@@ -255,6 +291,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
     targetType?: 'question' | 'duration';
     targetValue?: number;
     teacherNote?: string;
+    customColor?: string;
   } | null>(null);
   const [clipboardNotice, setClipboardNotice] = useState<string | null>(null);
 
@@ -272,6 +309,9 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
   const [newItemTargetType, setNewItemTargetType] = useState<'question' | 'duration'>('question');
   const [newItemTargetVal, setNewItemTargetVal] = useState<number>(40);
   const [newItemNote, setNewItemNote] = useState<string>('');
+  const [newItemHue, setNewItemHue] = useState<number>(215);
+  const [newItemColor, setNewItemColor] = useState<string>(() => selectedBoxTheme.accentColor || '#3B82F6');
+  const [editItemHue, setEditItemHue] = useState<number>(215);
 
   // Template form state
   const [templateName, setTemplateName] = useState('');
@@ -407,6 +447,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
       targetType: item.targetType,
       targetValue: item.targetValue,
       teacherNote: item.teacherNote,
+      customColor: item.customColor,
     });
     setClipboardNotice(`"${item.subject} • ${item.topic || 'Ders'}" oturumu kopyalandı! İstediğiniz gün veya oturumdaki "Yapıştır" butonuna tıklayarak aktarabilirsiniz.`);
     setTimeout(() => setClipboardNotice(null), 5000);
@@ -435,6 +476,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
       targetValue: copiedSession.targetValue || 40,
       actualDurationMinutes: 0,
       teacherNote: copiedSession.teacherNote || '',
+      customColor: copiedSession.customColor,
       status: 'pending',
     });
 
@@ -445,6 +487,25 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
   const handleClearCopiedSession = () => {
     setCopiedSession(null);
     setClipboardNotice(null);
+  };
+
+  const handleApplyItemColor = async (item: ScheduleItem, hexColor: string, scope: 'single' | 'subject' | 'all') => {
+    if (scope === 'single') {
+      await updateScheduleItem(item.id, { customColor: hexColor });
+    } else if (scope === 'subject') {
+      const sameSubjectItems = studentSchedules.filter(
+        s => normalizeSubjectName(s.subject).toLocaleLowerCase('tr-TR') === normalizeSubjectName(item.subject).toLocaleLowerCase('tr-TR')
+      );
+      for (const it of sameSubjectItems) {
+        await updateScheduleItem(it.id, { customColor: hexColor });
+      }
+    } else if (scope === 'all') {
+      setBoxTheme(hexColor);
+      for (const it of studentSchedules) {
+        await updateScheduleItem(it.id, { customColor: hexColor });
+      }
+    }
+    setColorPickerTargetItem(null);
   };
 
   // If no student exists at all
@@ -601,6 +662,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
         targetValue: Number(newItemTargetVal) || 40,
         actualDurationMinutes: 0,
         teacherNote: newItemNote.trim() || undefined,
+        customColor: newItemColor || selectedBoxTheme.accentColor,
         status: 'pending',
       });
     }
@@ -610,7 +672,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
     setNewItemTime('');
     setNewItemSource('');
     setNewItemNote('');
-    setJsonNotice(`${activeStudent.name} için ${DAY_NAMES[Number(newItemDay)]} ${sessionNum}. Oturum (${cleanSubject}) eklendi.`);
+    setJsonNotice(`${activeStudent.name} için ${DAY_NAMES[Number(newItemDay)]} ${sessionNum}. Oturum (${cleanSubject}) seçilen kutucuk rengiyle eklendi.`);
     setTimeout(() => setJsonNotice(null), 3000);
   };
 
@@ -1215,8 +1277,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                         const sessionNum = sIdx + 1;
                         const item = dayItems.find(s => s.sessionNumber === sessionNum) || (!dayItems.some(s => s.sessionNumber) ? dayItems[sIdx] : undefined);
                         const subjectColor = item ? getSubjectColor(item.subject) : null;
-                        const selectedBoxTheme = BOX_THEMES.find(b => b.id === boxTheme) || BOX_THEMES[0];
                         const isCompleted = item?.status === 'completed';
+                        const itemAccent = item?.customColor || selectedBoxTheme.accentColor;
                         const isDimmed = item && (
                           (completionFilter === 'completed' && !isCompleted) ||
                           (completionFilter === 'pending' && isCompleted)
@@ -1230,24 +1292,39 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                             {item ? (
                               <div
                                 style={{
-                                  backgroundColor: isCompleted
-                                    ? '#10b98114'
-                                    : `${selectedBoxTheme.accentColor}18`,
+                                  background: isCompleted
+                                    ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.34) 0%, rgba(5, 150, 105, 0.22) 100%)'
+                                    : `${itemAccent}22`,
                                   borderColor: isCompleted
-                                    ? '#10b98150'
-                                    : `${selectedBoxTheme.accentColor}50`,
+                                    ? '#10B981'
+                                    : `${itemAccent}75`,
+                                  borderLeftWidth: isCompleted ? '5px' : '4px',
+                                  borderLeftColor: isCompleted ? '#059669' : itemAccent,
+                                  boxShadow: isCompleted
+                                    ? '0 6px 18px -3px rgba(16, 185, 129, 0.38), 0 0 0 1px rgba(16, 185, 129, 0.35)'
+                                    : undefined,
                                   opacity: isDimmed ? 0.35 : 1,
                                 }}
-                                className="p-2.5 rounded-2xl border shadow-2xs space-y-1.5 transition-all group hover:shadow-xs"
+                                className={`p-2.5 rounded-2xl border space-y-1.5 transition-all group relative overflow-hidden ${
+                                  isCompleted
+                                    ? 'border-2 scale-[1.01]'
+                                    : 'shadow-2xs hover:shadow-xs'
+                                }`}
                               >
                                 <div className="flex items-start justify-between gap-1">
                                   <span
                                     style={{
-                                      backgroundColor: isCompleted ? '#10b98125' : `${selectedBoxTheme.accentColor}25`,
-                                      borderColor: isCompleted ? '#10b98140' : `${selectedBoxTheme.accentColor}40`,
-                                      color: isCompleted ? '#059669' : (subjectColor ? `#${subjectColor.text}` : selectedBoxTheme.accentColor),
+                                      backgroundColor: isCompleted ? '#059669' : `${itemAccent}28`,
+                                      borderColor: isCompleted ? '#047857' : `${itemAccent}55`,
+                                      color: isCompleted
+                                        ? '#FFFFFF'
+                                        : item.customColor
+                                        ? item.customColor
+                                        : subjectColor
+                                        ? `#${subjectColor.text}`
+                                        : itemAccent,
                                     }}
-                                    className="font-black text-[10px] leading-tight px-1.5 py-0.5 rounded-md border"
+                                    className="font-black text-[10px] leading-tight px-1.5 py-0.5 rounded-md border shadow-2xs"
                                   >
                                     {item.subject}
                                   </span>
@@ -1259,17 +1336,17 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                                       e.stopPropagation();
                                       toggleScheduleItemCompletion(item.id);
                                     }}
-                                    className={`px-1.5 py-0.5 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                                    className={`px-2 py-0.5 rounded-lg text-[10px] font-black flex items-center gap-1 transition-all cursor-pointer ${
                                       isCompleted
-                                        ? 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-2xs'
+                                        ? 'bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white shadow-sm shadow-emerald-500/35 ring-1 ring-white/30'
                                         : 'bg-white hover:bg-emerald-50 dark:bg-neutral-800 dark:hover:bg-emerald-950/40 text-neutral-500 hover:text-emerald-600 border border-black/10 dark:border-white/10'
                                     }`}
                                     title={isCompleted ? 'Tamamlandı (Geri almak için tıklayın)' : 'Oturumu Tamamlandı Olarak İşaretle'}
                                   >
                                     {isCompleted ? (
                                       <>
-                                        <CheckCircle2 className="w-3 h-3 text-white fill-current" />
-                                        <span>Yapıldı</span>
+                                        <CheckCircle2 className="w-3.5 h-3.5 text-white stroke-[2.5]" />
+                                        <span className="tracking-wide">TAMAMLANDI</span>
                                       </>
                                     ) : (
                                       <>
@@ -1281,36 +1358,41 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                                 </div>
 
                                 <div
-                                  className={`font-semibold text-[11px] leading-snug line-clamp-2 transition-all ${
+                                  className={`font-extrabold text-[11px] leading-snug line-clamp-2 transition-all flex items-center gap-1 ${
                                     isCompleted
-                                      ? 'line-through text-neutral-400 dark:text-neutral-500'
+                                      ? 'text-emerald-950 dark:text-emerald-50'
                                       : 'text-neutral-900 dark:text-white'
                                   }`}
                                 >
-                                  {item.topic}
+                                  {isCompleted && <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-300 stroke-[3] shrink-0" />}
+                                  <span>{item.topic}</span>
                                 </div>
 
                                 {/* Optional Time if entered */}
                                 {item.timeRange && (
-                                  <div className="text-[10px] text-neutral-500 dark:text-neutral-400 flex items-center gap-1 font-mono">
-                                    <Clock className="w-3 h-3 text-neutral-400" />
+                                  <div className={`text-[10px] flex items-center gap-1 font-mono ${
+                                    isCompleted ? 'text-emerald-900 dark:text-emerald-100 font-bold' : 'text-neutral-500 dark:text-neutral-400'
+                                  }`}>
+                                    <Clock className={`w-3 h-3 ${isCompleted ? 'text-emerald-600 dark:text-emerald-300' : 'text-neutral-400'}`} />
                                     <span>{item.timeRange}</span>
                                   </div>
                                 )}
 
                                 {/* Target (Question / Duration) */}
                                 {item.targetValue && (
-                                  <div className="text-[10px] font-mono text-neutral-600 dark:text-neutral-300 flex items-center gap-1 font-semibold">
-                                    <Target className="w-3 h-3 text-rose-500" />
+                                  <div className={`text-[10px] font-mono flex items-center gap-1 font-bold ${
+                                    isCompleted ? 'text-emerald-900 dark:text-emerald-100' : 'text-neutral-600 dark:text-neutral-300'
+                                  }`}>
+                                    <Target className={`w-3 h-3 ${isCompleted ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-500'}`} />
                                     <span>
                                       {item.targetValue} {item.targetType === 'duration' ? 'Dakika' : 'Soru'}
                                     </span>
                                   </div>
                                 )}
 
-                                {/* Interactive Timer Button, Copy & Delete for teacher */}
-                                <div className="pt-1.5 border-t border-black/5 dark:border-white/5 flex items-center justify-between no-print gap-1">
-                                  <div className="flex items-center gap-1">
+                                {/* Interactive Timer Button, Color Picker, Copy & Delete */}
+                                <div className="pt-1.5 border-t border-black/10 dark:border-white/10 flex items-center justify-between no-print gap-1">
+                                  <div className="flex items-center gap-1 flex-wrap">
                                     <button
                                       onClick={() => startTimer({
                                         scheduleItemId: item.id,
@@ -1319,11 +1401,29 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                                         mode: item.targetType === 'duration' ? 'pomodoro' : 'stopwatch',
                                         initialMinutes: item.targetValue || 25,
                                       })}
-                                      className="p-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                      className="p-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-700 dark:text-emerald-200 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
                                       title="Sayacı Başlat"
                                     >
                                       <Play className="w-2.5 h-2.5 fill-current" />
                                       <span>Sayaç</span>
+                                    </button>
+
+                                    {/* Box Color Picker Button */}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setColorPickerTargetItem(item);
+                                      }}
+                                      style={{
+                                        color: isCompleted ? '#047857' : itemAccent,
+                                        backgroundColor: isCompleted ? '#10B98128' : `${itemAccent}20`,
+                                      }}
+                                      className="p-1 rounded-lg hover:opacity-80 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-all"
+                                      title="Bu Kutucuğun Rengini Yelpazeden Değiştir"
+                                    >
+                                      <Palette className="w-2.5 h-2.5" />
+                                      <span>Renk</span>
                                     </button>
 
                                     {/* Copy Session Button */}
@@ -1337,7 +1437,6 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                                       title="Bu Oturumu Kopyala"
                                     >
                                       <Copy className="w-2.5 h-2.5" />
-                                      <span>Kopyala</span>
                                     </button>
                                   </div>
 
@@ -1523,19 +1622,32 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                 {cardItems.map(item => {
                   const isCompleted = item.status === 'completed';
                   const isTodayItem = item.dayOfWeek === todayDayOfWeek;
+                  const itemAccent = item.customColor || selectedBoxTheme.accentColor;
 
                   return (
                     <div
                       key={item.id}
                       style={{
-                        borderColor: isCompleted ? '#10b98150' : `${selectedBoxTheme.accentColor}35`,
-                        backgroundColor: isCompleted ? '#10b9810d' : `${selectedBoxTheme.accentColor}0A`,
+                        borderColor: isCompleted ? '#10B981' : `${itemAccent}75`,
+                        borderLeftWidth: isCompleted ? '6px' : '5px',
+                        borderLeftColor: isCompleted ? '#059669' : itemAccent,
+                        background: isCompleted
+                          ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.34) 0%, rgba(5, 150, 105, 0.20) 100%)'
+                          : `${itemAccent}20`,
+                        boxShadow: isCompleted
+                          ? '0 8px 22px -4px rgba(16, 185, 129, 0.38), 0 0 0 1px rgba(16, 185, 129, 0.35)'
+                          : undefined,
                       }}
-                      className="p-4 rounded-3xl bg-white dark:bg-[#1C1C1E] border shadow-xs space-y-2 transition-all group hover:shadow-sm"
+                      className={`p-4 rounded-3xl border space-y-2 transition-all group ${
+                        isCompleted ? 'border-2 scale-[1.01]' : 'shadow-xs hover:shadow-sm'
+                      }`}
                     >
                       <div className="flex items-center justify-between text-xs">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-extrabold text-blue-600 dark:text-blue-400">
+                          <span
+                            style={{ color: isCompleted ? '#047857' : itemAccent }}
+                            className="font-extrabold dark:brightness-125"
+                          >
                             {DAY_NAMES[item.dayOfWeek]} {item.sessionNumber ? `• ${item.sessionNumber}. Oturum` : ''}
                           </span>
                           {isTodayItem && (
@@ -1547,39 +1659,51 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
 
                         {/* Status badge */}
                         {isCompleted ? (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-                            <span>Tamamlandı</span>
+                          <span className="text-[10px] font-black px-2.5 py-1 rounded-full bg-gradient-to-r from-emerald-500 to-green-600 text-white flex items-center gap-1 shadow-sm shadow-emerald-500/35 ring-1 ring-white/30">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-white stroke-[2.5]" />
+                            <span className="tracking-wide">TAMAMLANDI ✓</span>
                           </span>
                         ) : (
-                          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-500">
+                          <span
+                            style={{
+                              backgroundColor: `${itemAccent}25`,
+                              color: itemAccent,
+                              borderColor: `${itemAccent}45`,
+                            }}
+                            className="text-[10px] font-bold px-2 py-0.5 rounded-full border"
+                          >
                             Bekliyor
                           </span>
                         )}
                       </div>
 
-                      <h3 className={`font-bold text-sm transition-all ${
-                        isCompleted ? 'line-through text-neutral-400 dark:text-neutral-500' : 'text-neutral-900 dark:text-white'
+                      <h3 className={`font-extrabold text-sm transition-all flex items-center gap-1.5 ${
+                        isCompleted ? 'text-emerald-950 dark:text-emerald-50' : 'text-neutral-900 dark:text-white'
                       }`}>
-                        {item.subject} • {item.topic}
+                        {isCompleted && <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-300 stroke-[3] shrink-0" />}
+                        <span>{item.subject} • {item.topic}</span>
                       </h3>
 
                       {item.timeRange && (
-                        <div className="text-xs text-neutral-500 flex items-center gap-1 font-mono">
-                          <Clock className="w-3.5 h-3.5 text-neutral-400" />
+                        <div className={`text-xs flex items-center gap-1 font-mono ${
+                          isCompleted ? 'text-emerald-900 dark:text-emerald-100 font-bold' : 'text-neutral-500'
+                        }`}>
+                          <Clock className={`w-3.5 h-3.5 ${isCompleted ? 'text-emerald-600 dark:text-emerald-300' : 'text-neutral-400'}`} />
                           <span>{item.timeRange}</span>
                         </div>
                       )}
 
                       {item.targetValue && (
-                        <div className="text-xs text-neutral-500 flex items-center gap-1 font-mono">
-                          <Target className="w-3.5 h-3.5 text-rose-500" />
+                        <div className={`text-xs flex items-center gap-1 font-mono ${
+                          isCompleted ? 'text-emerald-900 dark:text-emerald-100 font-bold' : 'text-neutral-500'
+                        }`}>
+                          <Target className={`w-3.5 h-3.5 ${isCompleted ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-500'}`} />
                           <span>{item.targetValue} {item.targetType === 'duration' ? 'Dakika' : 'Soru'}</span>
                         </div>
                       )}
 
-                      <div className="pt-2 border-t border-black/5 dark:border-white/5 flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
+                      <div className="pt-2 border-t border-black/10 dark:border-white/10 flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <button
                             onClick={() => startTimer({
                               scheduleItemId: item.id,
@@ -1588,37 +1712,52 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                               mode: item.targetType === 'duration' ? 'pomodoro' : 'stopwatch',
                               initialMinutes: item.targetValue || 25,
                             })}
-                            className="px-2.5 py-1.5 rounded-xl bg-emerald-500 text-white font-bold text-xs flex items-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                            className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
                             title="Sayacı Başlat"
                           >
                             <Play className="w-3 h-3 fill-current" />
-                            <span>Sayacı Başlat</span>
+                            <span>Sayaç</span>
                           </button>
 
                           {/* Quick Toggle Completion Checkbox */}
                           <button
                             type="button"
                             onClick={() => toggleScheduleItemCompletion(item.id)}
-                            className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                            className={`px-2.5 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
                               isCompleted
-                                ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                                : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:bg-emerald-50 hover:text-emerald-600 border border-black/5 dark:border-white/5'
+                                ? 'bg-gradient-to-r from-emerald-500 to-green-600 text-white shadow-sm shadow-emerald-500/30'
+                                : 'bg-white/80 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:bg-emerald-50 hover:text-emerald-600 border border-black/10 dark:border-white/10'
                             }`}
                             title={isCompleted ? 'Tamamlandı (Geri almak için tıklayın)' : 'Oturumu Tamamlandı Olarak İşaretle'}
                           >
-                            <CheckCircle2 className={`w-3.5 h-3.5 ${isCompleted ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-400'}`} />
+                            <CheckCircle2 className={`w-3.5 h-3.5 ${isCompleted ? 'text-white' : 'text-neutral-400'}`} />
                             <span>{isCompleted ? 'Yapıldı' : 'Tamamla'}</span>
+                          </button>
+
+                          {/* Box Color Picker Button */}
+                          <button
+                            type="button"
+                            onClick={() => setColorPickerTargetItem(item)}
+                            style={{
+                              backgroundColor: `${itemAccent}22`,
+                              color: itemAccent,
+                              borderColor: `${itemAccent}45`,
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                            title="Bu Kutucuğun Rengini Yelpazeden Değiştir"
+                          >
+                            <Palette className="w-3 h-3" />
+                            <span>Renk</span>
                           </button>
 
                           {/* Copy Session Button */}
                           <button
                             type="button"
                             onClick={() => handleCopySession(item)}
-                            className="px-2.5 py-1.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 text-xs font-bold flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                            className="px-2 py-1.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/20 text-xs font-bold flex items-center gap-1 cursor-pointer transition-all active:scale-95"
                             title="Bu Oturumu Kopyala"
                           >
                             <Copy className="w-3 h-3" />
-                            <span>Kopyala</span>
                           </button>
                         </div>
 
@@ -1905,6 +2044,84 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                 </div>
               </div>
 
+              {/* Kutucuk Rengi Seçici (Renk Yelpazesi) */}
+              <div className="p-3.5 rounded-2xl bg-neutral-100/90 dark:bg-neutral-800/80 border border-black/10 dark:border-white/10 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="font-extrabold text-neutral-800 dark:text-neutral-200 flex items-center gap-1.5 text-xs sm:text-sm">
+                    <Palette className="w-4 h-4" style={{ color: newItemColor }} />
+                    <span>Kutucuk Rengi (Renk Yelpazesi)</span>
+                  </label>
+                  <label className="px-2.5 py-1 rounded-xl bg-white dark:bg-neutral-900 border border-black/10 dark:border-white/10 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer hover:border-blue-500 transition-all shadow-2xs">
+                    <span
+                      className="w-3.5 h-3.5 rounded-full border border-black/20 dark:border-white/30"
+                      style={{ backgroundColor: newItemColor }}
+                    />
+                    <span className="font-mono text-[11px]">{newItemColor}</span>
+                    <span className="text-[10px] text-blue-600 dark:text-blue-400 underline ml-0.5">Tam Yelpaze</span>
+                    <input
+                      type="color"
+                      value={newItemColor}
+                      onChange={e => setNewItemColor(e.target.value.toUpperCase())}
+                      className="sr-only"
+                    />
+                  </label>
+                </div>
+
+                {/* Gökkuşağı Renk Yelpazesi Kaydırıcısı (0 - 360 Derece) */}
+                <div className="space-y-1.5">
+                  <input
+                    type="range"
+                    min={0}
+                    max={360}
+                    value={newItemHue}
+                    onChange={e => {
+                      const h = Number(e.target.value);
+                      setNewItemHue(h);
+                      setNewItemColor(hslToHex(h, 82, 52));
+                    }}
+                    style={{
+                      background:
+                        'linear-gradient(to right, #FF0000 0%, #FF8800 12%, #FFFF00 22%, #00CC44 35%, #00CCCC 50%, #0066FF 65%, #8800FF 80%, #FF0088 92%, #FF0000 100%)',
+                    }}
+                    className="w-full h-4 rounded-full appearance-none cursor-pointer shadow-inner border border-black/15 dark:border-white/20"
+                    title="Renk Yelpazesinde Kaydırarak Renk Seçin"
+                  />
+                  <div className="flex items-center justify-between text-[10px] text-neutral-500 dark:text-neutral-400">
+                    <span>Yelpaze çubuğunu kaydırarak veya sağ üstteki "Tam Yelpaze"ye tıklayarak istediğiniz rengi seçin</span>
+                  </div>
+                </div>
+
+                {/* Canlı Kutucuk Önizlemesi */}
+                <div
+                  style={{
+                    backgroundColor: `${newItemColor}22`,
+                    borderColor: `${newItemColor}80`,
+                    borderLeftWidth: '4px',
+                    borderLeftColor: newItemColor,
+                  }}
+                  className="p-2.5 rounded-xl border flex items-center justify-between text-xs"
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      style={{
+                        backgroundColor: `${newItemColor}28`,
+                        borderColor: `${newItemColor}55`,
+                        color: newItemColor,
+                      }}
+                      className="font-black text-[10px] px-2 py-0.5 rounded-md border"
+                    >
+                      {newItemSubject || 'Ders'}
+                    </span>
+                    <span className="font-bold text-neutral-900 dark:text-white truncate max-w-[180px]">
+                      {newItemTopic || 'Örnek Kutucuk Görünümü'}
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-semibold text-neutral-500 dark:text-neutral-400">
+                    Canlı Önizleme
+                  </span>
+                </div>
+              </div>
+
               {/* Not */}
               <div>
                 <label className="block font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
@@ -1930,8 +2147,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                 <button
                   type="submit"
                   style={{
-                    backgroundColor: selectedBoxTheme.accentColor,
-                    boxShadow: `0 4px 14px 0 ${selectedBoxTheme.accentColor}35`
+                    backgroundColor: newItemColor || selectedBoxTheme.accentColor,
+                    boxShadow: `0 4px 14px 0 ${(newItemColor || selectedBoxTheme.accentColor)}40`
                   }}
                   className="px-5 py-2.5 rounded-2xl text-white font-bold cursor-pointer"
                 >
@@ -1939,6 +2156,167 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: KUTUCUK RENGİNİ YELPAZEDEN DEĞİŞTİR (MEVCUT KUTUCUKLAR İÇİN) */}
+      {colorPickerTargetItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 dark:bg-black/80 backdrop-blur-md animate-in fade-in select-none">
+          <div className="w-full max-w-md rounded-3xl bg-white dark:bg-[#1C1C1E] border border-black/10 dark:border-white/10 shadow-2xl p-5 sm:p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-black/5 dark:border-white/5">
+              <div className="flex items-center gap-2.5">
+                <div
+                  className="w-9 h-9 rounded-2xl flex items-center justify-center text-white shadow-xs shrink-0"
+                  style={{ backgroundColor: colorPickerTargetItem.customColor || selectedBoxTheme.accentColor }}
+                >
+                  <Palette className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-extrabold text-neutral-900 dark:text-white">
+                    Kutucuk Rengini Yelpazeden Seç
+                  </h3>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                    {DAY_NAMES[colorPickerTargetItem.dayOfWeek]} • {colorPickerTargetItem.sessionNumber || 1}. Oturum ({colorPickerTargetItem.subject})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setColorPickerTargetItem(null)}
+                className="p-1.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-500 hover:text-neutral-900 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {colorPickerTargetItem.status === 'completed' && (
+              <div className="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-semibold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                <span>Bu oturum "TAMAMLANDI" olarak işaretlendiği için dikkat çekici yeşil renkte görünüyor. Seçtiğiniz renk oturum bekleme durumundayken uygulanır.</span>
+              </div>
+            )}
+
+            {/* Renk Yelpazesi Kaydırıcısı ve Tam Renk Seçici */}
+            <div className="p-4 rounded-2xl bg-neutral-100 dark:bg-neutral-800/80 border border-black/10 dark:border-white/10 space-y-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-extrabold text-neutral-800 dark:text-neutral-200">
+                  Renk Yelpazesi
+                </span>
+                <label className="px-3 py-1.5 rounded-xl bg-white dark:bg-neutral-900 border border-black/10 dark:border-white/10 text-xs font-extrabold text-neutral-800 dark:text-neutral-200 cursor-pointer hover:border-blue-500 transition-all flex items-center gap-1.5 shadow-2xs">
+                  <span
+                    className="w-4 h-4 rounded-full border border-black/20 dark:border-white/30"
+                    style={{ backgroundColor: colorPickerTargetItem.customColor || selectedBoxTheme.accentColor }}
+                  />
+                  <span>Detaylı Renk Yelpazesi Aç</span>
+                  <input
+                    type="color"
+                    value={colorPickerTargetItem.customColor || selectedBoxTheme.accentColor}
+                    onChange={e => {
+                      const hex = e.target.value.toUpperCase();
+                      setColorPickerTargetItem(prev => prev ? { ...prev, customColor: hex } : null);
+                    }}
+                    className="sr-only"
+                  />
+                </label>
+              </div>
+
+              <input
+                type="range"
+                min={0}
+                max={360}
+                value={editItemHue}
+                onChange={e => {
+                  const h = Number(e.target.value);
+                  setEditItemHue(h);
+                  const hex = hslToHex(h, 82, 52);
+                  setColorPickerTargetItem(prev => prev ? { ...prev, customColor: hex } : null);
+                }}
+                style={{
+                  background:
+                    'linear-gradient(to right, #FF0000 0%, #FF8800 12%, #FFFF00 22%, #00CC44 35%, #00CCCC 50%, #0066FF 65%, #8800FF 80%, #FF0088 92%, #FF0000 100%)',
+                }}
+                className="w-full h-5 rounded-full appearance-none cursor-pointer shadow-inner border border-black/15 dark:border-white/20"
+              />
+
+              {/* Canlı Önizleme */}
+              <div
+                style={{
+                  backgroundColor: `${colorPickerTargetItem.customColor || selectedBoxTheme.accentColor}24`,
+                  borderColor: `${colorPickerTargetItem.customColor || selectedBoxTheme.accentColor}80`,
+                  borderLeftWidth: '4px',
+                  borderLeftColor: colorPickerTargetItem.customColor || selectedBoxTheme.accentColor,
+                }}
+                className="p-3 rounded-xl border flex items-center justify-between text-xs"
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    style={{
+                      backgroundColor: `${colorPickerTargetItem.customColor || selectedBoxTheme.accentColor}28`,
+                      borderColor: `${colorPickerTargetItem.customColor || selectedBoxTheme.accentColor}55`,
+                      color: colorPickerTargetItem.customColor || selectedBoxTheme.accentColor,
+                    }}
+                    className="font-black text-[10px] px-2 py-0.5 rounded-md border"
+                  >
+                    {colorPickerTargetItem.subject}
+                  </span>
+                  <span className="font-bold text-neutral-900 dark:text-white truncate max-w-[160px]">
+                    {colorPickerTargetItem.topic}
+                  </span>
+                </div>
+                <span className="font-mono text-[10px] font-bold text-neutral-500">
+                  {colorPickerTargetItem.customColor || selectedBoxTheme.accentColor}
+                </span>
+              </div>
+            </div>
+
+            {/* Uygulama Kapsamı Butonları */}
+            <div className="pt-2 border-t border-black/5 dark:border-white/5 space-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleApplyItemColor(
+                      colorPickerTargetItem,
+                      colorPickerTargetItem.customColor || selectedBoxTheme.accentColor,
+                      'single'
+                    )
+                  }
+                  style={{
+                    backgroundColor: colorPickerTargetItem.customColor || selectedBoxTheme.accentColor,
+                  }}
+                  className="py-2.5 px-3 rounded-xl text-white font-bold text-xs shadow-sm cursor-pointer active:scale-95 transition-all text-center"
+                >
+                  Bu Kutucuğa Uygula
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleApplyItemColor(
+                      colorPickerTargetItem,
+                      colorPickerTargetItem.customColor || selectedBoxTheme.accentColor,
+                      'subject'
+                    )
+                  }
+                  className="py-2.5 px-3 rounded-xl bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-900 dark:text-white font-bold text-xs border border-black/10 dark:border-white/10 cursor-pointer active:scale-95 transition-all text-center"
+                >
+                  Tüm "{colorPickerTargetItem.subject}"
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleApplyItemColor(
+                      colorPickerTargetItem,
+                      colorPickerTargetItem.customColor || selectedBoxTheme.accentColor,
+                      'all'
+                    )
+                  }
+                  className="py-2.5 px-3 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 font-bold text-xs cursor-pointer active:scale-95 transition-all text-center"
+                >
+                  Tüm Kutucuklara
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

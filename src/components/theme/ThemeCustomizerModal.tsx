@@ -20,16 +20,48 @@ export const BG_THEMES: { id: BackgroundTheme; name: string; previewClass: strin
 
 export const BOX_THEMES: { id: BoxColorTheme; name: string; accentColor: string; bgClass: string; borderClass: string; badgeText: string }[] = [
   { id: 'blue', name: 'Klasik Mavi', accentColor: '#3B82F6', bgClass: 'bg-blue-500/10 hover:bg-blue-500/15', borderClass: 'border-blue-500/30 hover:border-blue-500/60', badgeText: 'text-blue-600 dark:text-blue-400' },
-  { id: 'orange', name: 'Enerjik Turuncu', accentColor: '#F97316', bgClass: 'bg-orange-500/10 hover:bg-orange-500/15', borderClass: 'border-orange-500/30 hover:border-orange-500/60', badgeText: 'text-orange-600 dark:text-orange-400' },
-  { id: 'emerald', name: 'Zümrüt Yeşili', accentColor: '#10B981', bgClass: 'bg-emerald-500/10 hover:bg-emerald-500/15', borderClass: 'border-emerald-500/30 hover:border-emerald-500/60', badgeText: 'text-emerald-600 dark:text-emerald-400' },
-  { id: 'purple', name: 'Asil Mor', accentColor: '#A855F7', bgClass: 'bg-purple-500/10 hover:bg-purple-500/15', borderClass: 'border-purple-500/30 hover:border-purple-500/60', badgeText: 'text-purple-600 dark:text-purple-400' },
-  { id: 'rose', name: 'Gül / Mercan', accentColor: '#F43F5E', bgClass: 'bg-rose-500/10 hover:bg-rose-500/15', borderClass: 'border-rose-500/30 hover:border-rose-500/60', badgeText: 'text-rose-600 dark:text-rose-400' },
-  { id: 'amber', name: 'Sıcak Amber', accentColor: '#F59E0B', bgClass: 'bg-amber-500/10 hover:bg-amber-500/15', borderClass: 'border-amber-500/30 hover:border-amber-500/60', badgeText: 'text-amber-600 dark:text-amber-400' },
+  { id: 'sky', name: 'Gökyüzü Mavisi', accentColor: '#0EA5E9', bgClass: 'bg-sky-500/10 hover:bg-sky-500/15', borderClass: 'border-sky-500/30 hover:border-sky-500/60', badgeText: 'text-sky-600 dark:text-sky-400' },
   { id: 'cyan', name: 'Okyanus Cyan', accentColor: '#06B6D4', bgClass: 'bg-cyan-500/10 hover:bg-cyan-500/15', borderClass: 'border-cyan-500/30 hover:border-cyan-500/60', badgeText: 'text-cyan-600 dark:text-cyan-400' },
+  { id: 'teal', name: 'Turkuaz', accentColor: '#14B8A6', bgClass: 'bg-teal-500/10 hover:bg-teal-500/15', borderClass: 'border-teal-500/30 hover:border-teal-500/60', badgeText: 'text-teal-600 dark:text-teal-400' },
+  { id: 'emerald', name: 'Zümrüt Yeşili', accentColor: '#10B981', bgClass: 'bg-emerald-500/10 hover:bg-emerald-500/15', borderClass: 'border-emerald-500/30 hover:border-emerald-500/60', badgeText: 'text-emerald-600 dark:text-emerald-400' },
+  { id: 'green', name: 'Çimen Yeşili', accentColor: '#22C55E', bgClass: 'bg-green-500/10 hover:bg-green-500/15', borderClass: 'border-green-500/30 hover:border-green-500/60', badgeText: 'text-green-600 dark:text-green-400' },
+  { id: 'lime', name: 'Limon Yeşili', accentColor: '#84CC16', bgClass: 'bg-lime-500/10 hover:bg-lime-500/15', borderClass: 'border-lime-500/30 hover:border-lime-500/60', badgeText: 'text-lime-600 dark:text-lime-400' },
+  { id: 'yellow', name: 'Güneş Sarısı', accentColor: '#EAB308', bgClass: 'bg-yellow-500/10 hover:bg-yellow-500/15', borderClass: 'border-yellow-500/30 hover:border-yellow-500/60', badgeText: 'text-yellow-600 dark:text-yellow-400' },
+  { id: 'amber', name: 'Sıcak Amber', accentColor: '#F59E0B', bgClass: 'bg-amber-500/10 hover:bg-amber-500/15', borderClass: 'border-amber-500/30 hover:border-amber-500/60', badgeText: 'text-amber-600 dark:text-amber-400' },
+  { id: 'orange', name: 'Enerjik Turuncu', accentColor: '#F97316', bgClass: 'bg-orange-500/10 hover:bg-orange-500/15', borderClass: 'border-orange-500/30 hover:border-orange-500/60', badgeText: 'text-orange-600 dark:text-orange-400' },
+  { id: 'coral', name: 'Mercan', accentColor: '#FF6B4A', bgClass: 'bg-orange-500/10 hover:bg-orange-500/15', borderClass: 'border-orange-500/30 hover:border-orange-500/60', badgeText: 'text-orange-600 dark:text-orange-400' },
+  { id: 'red', name: 'Kızıl Kırmızı', accentColor: '#EF4444', bgClass: 'bg-red-500/10 hover:bg-red-500/15', borderClass: 'border-red-500/30 hover:border-red-500/60', badgeText: 'text-red-600 dark:text-red-400' },
+  { id: 'rose', name: 'Gül / Rose', accentColor: '#F43F5E', bgClass: 'bg-rose-500/10 hover:bg-rose-500/15', borderClass: 'border-rose-500/30 hover:border-rose-500/60', badgeText: 'text-rose-600 dark:text-rose-400' },
+  { id: 'pink', name: 'Şeker Pembe', accentColor: '#EC4899', bgClass: 'bg-pink-500/10 hover:bg-pink-500/15', borderClass: 'border-pink-500/30 hover:border-pink-500/60', badgeText: 'text-pink-600 dark:text-pink-400' },
+  { id: 'fuchsia', name: 'Canlı Fuşya', accentColor: '#D946EF', bgClass: 'bg-fuchsia-500/10 hover:bg-fuchsia-500/15', borderClass: 'border-fuchsia-500/30 hover:border-fuchsia-500/60', badgeText: 'text-fuchsia-600 dark:text-fuchsia-400' },
+  { id: 'purple', name: 'Asil Mor', accentColor: '#A855F7', bgClass: 'bg-purple-500/10 hover:bg-purple-500/15', borderClass: 'border-purple-500/30 hover:border-purple-500/60', badgeText: 'text-purple-600 dark:text-purple-400' },
+  { id: 'violet', name: 'Menekşe', accentColor: '#8B5CF6', bgClass: 'bg-violet-500/10 hover:bg-violet-500/15', borderClass: 'border-violet-500/30 hover:border-violet-500/60', badgeText: 'text-violet-600 dark:text-violet-400' },
+  { id: 'indigo', name: 'Derin İndigo', accentColor: '#6366F1', bgClass: 'bg-indigo-500/10 hover:bg-indigo-500/15', borderClass: 'border-indigo-500/30 hover:border-indigo-500/60', badgeText: 'text-indigo-600 dark:text-indigo-400' },
+  { id: 'navy', name: 'Kraliyet Laciverti', accentColor: '#2563EB', bgClass: 'bg-blue-600/10 hover:bg-blue-600/15', borderClass: 'border-blue-600/30 hover:border-blue-600/60', badgeText: 'text-blue-700 dark:text-blue-300' },
+  { id: 'lavender', name: 'Lavanta', accentColor: '#C084FC', bgClass: 'bg-purple-400/10 hover:bg-purple-400/15', borderClass: 'border-purple-400/30 hover:border-purple-400/60', badgeText: 'text-purple-500 dark:text-purple-300' },
+  { id: 'brown', name: 'Bronz / Kahve', accentColor: '#B45309', bgClass: 'bg-amber-700/10 hover:bg-amber-700/15', borderClass: 'border-amber-700/30 hover:border-amber-700/60', badgeText: 'text-amber-700 dark:text-amber-400' },
+  { id: 'copper', name: 'Bakır', accentColor: '#EA580C', bgClass: 'bg-orange-600/10 hover:bg-orange-600/15', borderClass: 'border-orange-600/30 hover:border-orange-600/60', badgeText: 'text-orange-700 dark:text-orange-400' },
+  { id: 'slate', name: 'Arduvaz / Füme', accentColor: '#64748B', bgClass: 'bg-slate-500/10 hover:bg-slate-500/15', borderClass: 'border-slate-500/30 hover:border-slate-500/60', badgeText: 'text-slate-600 dark:text-slate-400' },
+  { id: 'charcoal', name: 'Antrasit', accentColor: '#475569', bgClass: 'bg-slate-600/10 hover:bg-slate-600/15', borderClass: 'border-slate-600/30 hover:border-slate-600/60', badgeText: 'text-slate-700 dark:text-slate-300' },
 ];
 
 export const getActiveBoxTheme = (boxTheme: BoxColorTheme) => {
-  return BOX_THEMES.find(b => b.id === boxTheme) || BOX_THEMES[0];
+  const found = BOX_THEMES.find(
+    b => b.id === boxTheme || b.accentColor.toLowerCase() === String(boxTheme || '').toLowerCase()
+  );
+  if (found) return found;
+  if (typeof boxTheme === 'string' && /^#[0-9A-Fa-f]{6}$/.test(boxTheme.trim())) {
+    const hex = boxTheme.trim().toUpperCase();
+    return {
+      id: hex,
+      name: `Özel Renk (${hex})`,
+      accentColor: hex,
+      bgClass: 'bg-neutral-500/10 hover:bg-neutral-500/15',
+      borderClass: 'border-neutral-500/30 hover:border-neutral-500/60',
+      badgeText: 'text-neutral-700 dark:text-neutral-300',
+    };
+  }
+  return BOX_THEMES[0];
 };
 
 export const getThemeStyles = (boxTheme: BoxColorTheme) => {

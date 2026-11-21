@@ -1,7 +1,32 @@
 export type Role = 'teacher' | 'student';
 
 export type BackgroundTheme = 'default' | 'pure_white' | 'deep_black' | 'graphite' | 'slate' | 'cream' | 'navy';
-export type BoxColorTheme = 'blue' | 'orange' | 'emerald' | 'purple' | 'rose' | 'amber' | 'cyan';
+export type BoxColorTheme =
+  | 'blue'
+  | 'sky'
+  | 'cyan'
+  | 'teal'
+  | 'emerald'
+  | 'green'
+  | 'lime'
+  | 'yellow'
+  | 'amber'
+  | 'orange'
+  | 'coral'
+  | 'red'
+  | 'rose'
+  | 'pink'
+  | 'fuchsia'
+  | 'purple'
+  | 'violet'
+  | 'indigo'
+  | 'navy'
+  | 'lavender'
+  | 'brown'
+  | 'copper'
+  | 'slate'
+  | 'charcoal'
+  | string;
 
 export interface ThemeConfig {
   bgTheme: BackgroundTheme;
@@ -113,6 +138,7 @@ export interface ScheduleItem {
   actualDurationMinutes: number;
   solvedQuestions?: SolvedQuestions;
   teacherNote?: string;
+  customColor?: string; // Kutucuğa özel seçilen renk (HEX, örn: "#8B5CF6")
   status: ScheduleItemStatus;
   updatedAt?: string;
 }

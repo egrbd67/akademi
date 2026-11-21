@@ -24,7 +24,7 @@ import { ClassroomsModal } from './components/classrooms/ClassroomsModal';
 import { ClassroomsView } from './components/classrooms/ClassroomsView';
 import { AuthScreen } from './components/auth/AuthScreen';
 import { AccountSwitchModal } from './components/layout/AccountSwitchModal';
-import { ThemeCustomizerModal, BOX_THEMES } from './components/theme/ThemeCustomizerModal';
+import { ThemeCustomizerModal, getActiveBoxTheme } from './components/theme/ThemeCustomizerModal';
 
 function MainApp() {
   const { role, hasCompletedIntro, isLoggedIn, isAuthReady, bgTheme, boxTheme } = useApp();
@@ -37,7 +37,7 @@ function MainApp() {
 
   // Sync Box Theme accent variables across the entire document
   React.useEffect(() => {
-    const selected = BOX_THEMES.find(b => b.id === boxTheme) || BOX_THEMES[0];
+    const selected = getActiveBoxTheme(boxTheme);
     if (selected) {
       document.documentElement.style.setProperty('--box-accent', selected.accentColor);
       document.documentElement.style.setProperty('--box-accent-bg', `${selected.accentColor}18`);
