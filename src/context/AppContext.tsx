@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
 import { auth, googleProvider, testFirestoreConnection } from '../firebase';
@@ -53,6 +53,14 @@ import {
   deleteTrialExamFromFirestore
 } from '../services/firestoreService';
 import { STANDARD_SUBJECTS, normalizeSubjectName } from '../constants/subjects';
+import {
+  getLocalDateKey,
+  getYesterdayDateKey,
+  diffCalendarDays,
+  getCalendarWeekBounds,
+  resolveScheduleWeekState,
+  markScheduleResetCompleted
+} from '../utils/scheduleCycle';
 
 interface QuestionEntryState {
   isOpen: boolean;
@@ -121,6 +129,9 @@ interface AppContextType {
   updateScheduleItem: (id: string, updates: Partial<ScheduleItem>) => Promise<void>;
   toggleScheduleItemCompletion: (id: string) => Promise<void>;
   deleteScheduleItem: (id: string) => Promise<void>;
+  resetCompletedScheduleItems: (studentIds?: string[]) => Promise<number>;
+  lastScheduleAutoResetNotice: string | null;
+  dismissScheduleAutoResetNotice: () => void;
 
   // Templates
   templates: ScheduleTemplate[];
@@ -207,6 +218,7 @@ interface AppContextType {
   incrementStreakForStudent: (studentId: string) => void;
   addTeacherDailyStreak: (studentId: string) => Promise<boolean>;
   updateStudentStreakCount: (studentId: string, newCount: number) => Promise<void>;
+  restoreFrozenStreak: (studentId: string) => Promise<void>;
   requestStreakRecovery: (studentId: string, excuse: string) => void;
   approveStreakRecovery: (studentId: string) => void;
   rejectStreakRecovery: (studentId: string) => void;
@@ -393,6 +405,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
   const [isTimerModalOpen, setIsTimerModalOpen] = useState(false);
   const [questionEntryModal, setQuestionEntryModal] = useState<QuestionEntryState | null>(null);
+  const [hasLoadedSchedules, setHasLoadedSchedules] = useState(false);
+  const [lastScheduleAutoResetNotice, setLastScheduleAutoResetNotice] = useState<string | null>(null);
+  const autoFreezeAttemptedRef = useRef<Set<string>>(new Set());
+  const autoResetRunningRef = useRef<boolean>(false);
 
   // Sync activeTimer to localStorage so real-clock state survives tab suspension
   useEffect(() => {
@@ -519,6 +535,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const unsubSchedules = subscribeToCollection<ScheduleItem>('schedules', items => {
       setRawSchedules(items);
+      setHasLoadedSchedules(true);
     });
 
     const unsubHomeworks = subscribeToCollection<Homework>('homeworks', items => {
@@ -1329,6 +1346,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await deleteScheduleItemFromFirestore(id);
   }, []);
 
+  const resetCompletedScheduleItems = useCallback(async (studentIds?: string[]): Promise<number> => {
+    const scopeStudentSet = studentIds && studentIds.length > 0 ? new Set(studentIds) : null;
+    const targets = schedules.filter(
+      item =>
+        item.status === 'completed' &&
+        (!scopeStudentSet || scopeStudentSet.has(item.studentId))
+    );
+    if (targets.length === 0) return 0;
+
+    const updatedAt = new Date().toISOString();
+    const targetIdSet = new Set(targets.map(t => t.id));
+    setRawSchedules(prev =>
+      prev.map(item =>
+        targetIdSet.has(item.id)
+          ? { ...item, status: 'pending', updatedAt }
+          : item
+      )
+    );
+
+    await Promise.all(
+      targets.map(item =>
+        updateScheduleItemInFirestore(item.id, { status: 'pending', updatedAt })
+      )
+    );
+
+    return targets.length;
+  }, [schedules]);
+
+  const dismissScheduleAutoResetNotice = useCallback(() => {
+    setLastScheduleAutoResetNotice(null);
+  }, []);
+
   // Homework mutations
   const addHomework = useCallback(async (hw: Omit<Homework, 'id'>) => {
     const id = `hw_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -1433,16 +1482,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await saveFocusSessionToFirestore(newSession);
 
     // Otomatik Seri Kuralı: Öğrenci odak modunda 5 dakika (300 sn) ve üzeri geçirirse günde en fazla 1 kez +1 seri kazanır
+    // Dondurulmuş seriler sadece öğretmen tarafından geri getirilebilir.
     const isFiveMinOrMore = session.durationMinutes >= 5 || (session.durationSeconds || 0) >= 300;
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getLocalDateKey();
+    const isFrozen = targetSt?.streak?.status === 'frozen';
     const alreadyEarnedToday = (targetSt?.streak?.lastActiveDate === todayStr) && ((targetSt?.streak?.count || 0) > 0);
-    const earnedStreakNow = Boolean(isFiveMinOrMore && targetSt && !alreadyEarnedToday);
+    const earnedStreakNow = Boolean(isFiveMinOrMore && targetSt && !alreadyEarnedToday && !isFrozen);
 
     if (earnedStreakNow && targetSt) {
       const updatedStreak = {
         ...targetSt.streak,
         count: (targetSt.streak?.count || 0) + 1,
         status: 'active' as StreakStatus,
+        frozenDays: 0,
         lastActiveDate: todayStr
       };
       setRawStudents(prev => prev.map(s => s.id === targetSt.id ? { ...s, streak: updatedStreak } : s));
@@ -1852,12 +1904,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const incrementStreakForStudent = useCallback(async (studentId: string) => {
     const st = students.find(s => s.id === studentId);
     if (!st) return;
-    const todayStr = new Date().toISOString().split('T')[0];
+    // Dondurulmuş seri sadece öğretmen tarafından geri getirilebilir
+    if (st.streak?.status === 'frozen') return;
+    const todayStr = getLocalDateKey();
     if (st.streak?.lastActiveDate === todayStr && (st.streak?.count || 0) > 0) return;
     const updatedStreak = {
       ...st.streak,
       count: (st.streak?.count || 0) + 1,
       status: 'active' as StreakStatus,
+      frozenDays: 0,
       lastActiveDate: todayStr
     };
     setRawStudents(prev => prev.map(s => s.id === studentId ? { ...s, streak: updatedStreak } : s));
@@ -1867,15 +1922,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addTeacherDailyStreak = useCallback(async (studentId: string): Promise<boolean> => {
     const st = students.find(s => s.id === studentId);
     if (!st) return false;
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getLocalDateKey();
     // Aynı gün içinde zaten seri eklendiyse tekrar eklenemesin
-    if (st.streak?.lastActiveDate === todayStr && (st.streak?.count || 0) > 0) {
+    if (st.streak?.lastActiveDate === todayStr && (st.streak?.count || 0) > 0 && st.streak?.status === 'active') {
       return false;
     }
     const updatedStreak = {
       ...st.streak,
       count: (st.streak?.count || 0) + 1,
       status: 'active' as StreakStatus,
+      frozenDays: 0,
+      excuseNote: '',
+      requestDate: '',
       lastActiveDate: todayStr
     };
     setRawStudents(prev => prev.map(s => s.id === studentId ? { ...s, streak: updatedStreak } : s));
@@ -1895,15 +1953,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const st = students.find(s => s.id === studentId);
     if (!st) return;
     const cleanCount = Math.max(0, Math.floor(Number(newCount) || 0));
+    const yesterdayStr = getYesterdayDateKey();
+    const todayStr = getLocalDateKey();
+    const currentLast = st.streak?.lastActiveDate || '';
+    const safeLastActive =
+      cleanCount === 0
+        ? ''
+        : currentLast === todayStr
+        ? todayStr
+        : diffCalendarDays(currentLast, todayStr) >= 3 || !currentLast
+        ? yesterdayStr
+        : currentLast;
+
     const updatedStreak = {
       ...st.streak,
       count: cleanCount,
       status: (cleanCount > 0 ? 'active' : 'lost') as StreakStatus,
-      lastActiveDate: cleanCount === 0 ? '' : (st.streak?.lastActiveDate || '')
+      frozenDays: 0,
+      lastActiveDate: safeLastActive
     };
     setRawStudents(prev => prev.map(s => s.id === studentId ? { ...s, streak: updatedStreak } : s));
     await updateStudentInFirestore(studentId, { streak: updatedStreak });
   }, [students]);
+
+  const restoreFrozenStreak = useCallback(async (studentId: string) => {
+    const st = students.find(s => s.id === studentId);
+    if (!st) return;
+    const todayStr = getLocalDateKey();
+    const yesterdayStr = getYesterdayDateKey();
+    const currentLast = st.streak?.lastActiveDate || '';
+    // Düne ayarlayarak hemen tekrar donmasını önlüyoruz, aynı zamanda bugün +1 seri kazanılabilmesini sağlıyoruz
+    const restoredLastActive = currentLast === todayStr ? todayStr : yesterdayStr;
+    const restoredCount = Math.max(1, st.streak?.count || 0);
+
+    const updatedStreak = {
+      ...st.streak,
+      count: restoredCount,
+      status: 'active' as StreakStatus,
+      frozenDays: 0,
+      excuseNote: '',
+      requestDate: '',
+      lastActiveDate: restoredLastActive
+    };
+    setRawStudents(prev => prev.map(s => s.id === studentId ? { ...s, streak: updatedStreak } : s));
+    await updateStudentInFirestore(studentId, { streak: updatedStreak });
+    await logActivity({
+      studentId: st.id,
+      studentName: st.name,
+      teacherUid: st.teacherUid,
+      type: 'streak_active',
+      title: 'Dondurulan Seri Geri Getirildi',
+      detail: `${st.name} öğrencisinin dondurulan ${restoredCount} günlük serisi öğretmen tarafından geri getirildi.`
+    });
+  }, [students, logActivity]);
 
   const requestStreakRecovery = useCallback(async (studentId: string, excuse: string) => {
     const st = students.find(s => s.id === studentId);
@@ -1919,19 +2021,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [students]);
 
   const approveStreakRecovery = useCallback(async (studentId: string) => {
-    const st = students.find(s => s.id === studentId);
-    if (!st) return;
-    const updatedStreak = {
-      ...st.streak,
-      status: 'active' as StreakStatus,
-      excuseNote: '',
-      requestDate: ''
-    };
-    setRawStudents(prev => prev.map(s => s.id === studentId ? { ...s, streak: updatedStreak } : s));
-    await updateStudentInFirestore(studentId, {
-      streak: updatedStreak
-    });
-  }, [students]);
+    await restoreFrozenStreak(studentId);
+  }, [restoreFrozenStreak]);
 
   const rejectStreakRecovery = useCallback(async (studentId: string) => {
     const st = students.find(s => s.id === studentId);
@@ -1940,6 +2031,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...st.streak,
       status: 'lost' as StreakStatus,
       count: 0,
+      frozenDays: 0,
       excuseNote: '',
       requestDate: ''
     };
@@ -1955,7 +2047,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await incrementStreakForStudent(currentStudent.id);
     } else if (action === 'miss_one_day') {
       await updateStudentInFirestore(currentStudent.id, {
-        streak: { ...currentStudent.streak, status: 'frozen', frozenDays: 1 }
+        streak: { ...currentStudent.streak, status: 'frozen', frozenDays: 2 }
       });
     } else if (action === 'miss_three_days') {
       await updateStudentInFirestore(currentStudent.id, {
@@ -1963,6 +2055,118 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
   }, [currentStudent, incrementStreakForStudent]);
+
+  // Otomatik Seri Dondurma: 2 gün üst üste seri arttırılmadığında (son aktif günden sonra 2 tam gün geçtiyse) seriyi otomatik dondur
+  useEffect(() => {
+    if (!isLoggedIn || students.length === 0) return;
+
+    const evaluateAutoFreeze = async () => {
+      const todayStr = getLocalDateKey();
+      const toFreeze = students.filter(st => {
+        const count = st.streak?.count || 0;
+        const status = st.streak?.status;
+        const lastActive = st.streak?.lastActiveDate;
+        if (count <= 0 || status !== 'active' || !lastActive) return false;
+
+        // Örn: Pazartesi (D) aktif -> Salı (D+1) 1. gün arttırılmadı -> Çarşamba (D+2) 2. gün arttırılmadı -> Perşembe (D+3) itibarıyla 2 tam gün üst üste arttırılmamış olur
+        const daysSinceLast = diffCalendarDays(lastActive, todayStr);
+        const missedFullDays = daysSinceLast - 1;
+        if (missedFullDays < 2) return false;
+
+        const key = `${st.id}_${todayStr}_${lastActive}`;
+        if (autoFreezeAttemptedRef.current.has(key)) return false;
+        autoFreezeAttemptedRef.current.add(key);
+        return true;
+      });
+
+      if (toFreeze.length === 0) return;
+
+      for (const st of toFreeze) {
+        const daysSinceLast = diffCalendarDays(st.streak.lastActiveDate, todayStr);
+        const missedFullDays = Math.max(2, daysSinceLast - 1);
+        const frozenStreak = {
+          ...st.streak,
+          status: 'frozen' as StreakStatus,
+          frozenDays: missedFullDays
+        };
+        setRawStudents(prev => prev.map(s => s.id === st.id ? { ...s, streak: frozenStreak } : s));
+        try {
+          await updateStudentInFirestore(st.id, { streak: frozenStreak });
+          await logActivity({
+            studentId: st.id,
+            studentName: st.name,
+            teacherUid: st.teacherUid,
+            type: 'streak_frozen',
+            title: 'Seri Otomatik Donduruldu',
+            detail: `${st.name} ${missedFullDays} gün üst üste seri arttırmadığı için ${st.streak.count} günlük serisi donduruldu. Öğretmen isterse geri getirebilir.`
+          });
+        } catch (err) {
+          console.error('Otomatik seri dondurma hatası:', err);
+        }
+      }
+    };
+
+    evaluateAutoFreeze();
+    const interval = setInterval(evaluateAutoFreeze, 60000);
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === 'visible') {
+        evaluateAutoFreeze();
+      }
+    };
+    window.addEventListener('focus', evaluateAutoFreeze);
+    document.addEventListener('visibilitychange', onFocusOrVisible);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', evaluateAutoFreeze);
+      document.removeEventListener('visibilitychange', onFocusOrVisible);
+    };
+  }, [isLoggedIn, students, logActivity]);
+
+  // Otomatik 2 Haftalık Program Yenileme: 2. Hafta Pazar 23:59 -> 1. Hafta Pazartesi 00:00 geçişinde tüm tamamlandı kutucuklarını sıfırla
+  useEffect(() => {
+    if (!isLoggedIn || !hasLoadedSchedules) return;
+
+    const checkTwoWeekScheduleReset = async () => {
+      if (autoResetRunningRef.current) return;
+      const bounds = getCalendarWeekBounds();
+      const resolved = resolveScheduleWeekState(bounds);
+      if (!resolved.pendingResetMondayKey) return;
+
+      autoResetRunningRef.current = true;
+      try {
+        const resetCount = await resetCompletedScheduleItems();
+        markScheduleResetCompleted(resolved.pendingResetMondayKey);
+        if (resetCount > 0) {
+          setLastScheduleAutoResetNotice(
+            `Yeni 2 haftalık döngü (1. Hafta Pazartesi) başladığı için ${resetCount} tamamlandı kutucuğu otomatik olarak sıfırlandı.`
+          );
+        } else {
+          setLastScheduleAutoResetNotice(
+            'Yeni 2 haftalık döngüye (1. Hafta Pazartesi) geçildi. Program yeni döngü için hazır!'
+          );
+        }
+      } catch (err) {
+        console.error('2 haftalık tamamlandı sıfırlama hatası:', err);
+      } finally {
+        autoResetRunningRef.current = false;
+      }
+    };
+
+    checkTwoWeekScheduleReset();
+    const interval = setInterval(checkTwoWeekScheduleReset, 15000);
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === 'visible') {
+        checkTwoWeekScheduleReset();
+      }
+    };
+    window.addEventListener('focus', checkTwoWeekScheduleReset);
+    document.addEventListener('visibilitychange', onFocusOrVisible);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', checkTwoWeekScheduleReset);
+      document.removeEventListener('visibilitychange', onFocusOrVisible);
+    };
+  }, [isLoggedIn, hasLoadedSchedules, resetCompletedScheduleItems]);
 
   // Upcoming Exam (from teacher-assigned exams)
   const upcomingExam = useMemo(() => {
@@ -2050,6 +2254,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateScheduleItem,
         toggleScheduleItemCompletion,
         deleteScheduleItem,
+        resetCompletedScheduleItems,
+        lastScheduleAutoResetNotice,
+        dismissScheduleAutoResetNotice,
         templates,
         addTemplate,
         applyTemplateToStudent,
@@ -2101,6 +2308,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         incrementStreakForStudent,
         addTeacherDailyStreak,
         updateStudentStreakCount,
+        restoreFrozenStreak,
         requestStreakRecovery,
         approveStreakRecovery,
         rejectStreakRecovery,

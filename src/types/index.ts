@@ -107,7 +107,7 @@ export interface ActivityLog {
   studentId: string;
   studentName: string;
   teacherUid?: string;
-  type: 'focus_completed' | 'question_solved' | 'homework_submitted' | 'exam_recorded' | 'streak_active' | 'joined_class';
+  type: 'focus_completed' | 'question_solved' | 'homework_submitted' | 'exam_recorded' | 'streak_active' | 'streak_frozen' | 'joined_class';
   title: string;
   detail: string;
   timestamp: string;

@@ -127,7 +127,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => onNavigateTab('streak')}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-300 border border-cyan-500/25 transition-all font-medium text-xs sm:text-sm active:scale-95 cursor-pointer"
-          title="Dün soru çözülmediği için seriniz donduruldu! Detaylar için tıklayın"
+          title="2 gün üst üste seri arttırılmadığı için seriniz donduruldu. Öğretmeniniz isterse geri getirebilir."
         >
           <Snowflake className="w-4 h-4 text-cyan-500 animate-spin" style={{ animationDuration: '6s' }} />
           <span className="font-bold">{count}G (Donduruldu)</span>

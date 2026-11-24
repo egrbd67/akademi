@@ -38,6 +38,12 @@ import { exportScheduleToExcel, copyScheduleForGoogleSheets, DAY_NAMES, getSubje
 import { BOX_THEMES, getActiveBoxTheme } from '../theme/ThemeCustomizerModal';
 import { LeaderboardCard } from '../leaderboard/LeaderboardCard';
 import { normalizeSubjectName } from '../../constants/subjects';
+import {
+  CalendarWeekBounds,
+  getCalendarWeekBounds,
+  resolveScheduleWeekState,
+  saveSelectedScheduleWeek
+} from '../../utils/scheduleCycle';
 
 const DAYS = [
   { id: 0, label: 'Tüm Hafta' },
@@ -49,8 +55,6 @@ const DAYS = [
   { id: 6, label: 'Cumartesi' },
   { id: 7, label: 'Pazar' },
 ];
-
-const SCHEDULE_WEEK_MEMORY_KEY = 'akademi_takip_firebase_v1_schedule_week_memory';
 
 function hslToHex(h: number, s: number, l: number): string {
   const sNorm = s / 100;
@@ -84,112 +88,6 @@ function hslToHex(h: number, s: number, l: number): string {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
 }
 
-interface CalendarWeekBounds {
-  mondayKey: string;
-  weekEpochIndex: number;
-  dateRangeLabel: string;
-  nextMondayLabel: string;
-}
-
-function getCalendarWeekBounds(now: Date = new Date()): CalendarWeekBounds {
-  const localNow = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const dayOfWeek = localNow.getDay() === 0 ? 7 : localNow.getDay(); // 1 = Pazartesi ... 7 = Pazar
-  const mondayDate = new Date(localNow);
-  mondayDate.setDate(localNow.getDate() - (dayOfWeek - 1));
-  mondayDate.setHours(0, 0, 0, 0);
-
-  const sundayDate = new Date(mondayDate);
-  sundayDate.setDate(mondayDate.getDate() + 6);
-
-  const nextMondayDate = new Date(mondayDate);
-  nextMondayDate.setDate(mondayDate.getDate() + 7);
-
-  const y = mondayDate.getFullYear();
-  const m = String(mondayDate.getMonth() + 1).padStart(2, '0');
-  const d = String(mondayDate.getDate()).padStart(2, '0');
-  const mondayKey = `${y}-${m}-${d}`;
-
-  // Epoch Monday: 2024-01-01 00:00 local
-  const epochMonday = new Date(2024, 0, 1, 0, 0, 0, 0);
-  const weekEpochIndex = Math.round((mondayDate.getTime() - epochMonday.getTime()) / (7 * 86400000));
-
-  const fmtShort = (dt: Date) =>
-    dt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' });
-
-  return {
-    mondayKey,
-    weekEpochIndex,
-    dateRangeLabel: `${fmtShort(mondayDate)} Pzt – ${fmtShort(sundayDate)} Paz`,
-    nextMondayLabel: `${fmtShort(sundayDate)} Pazar 23:59 → ${fmtShort(nextMondayDate)} Pazartesi 00:00`,
-  };
-}
-
-function resolveRememberedOrAutoWeek(bounds: CalendarWeekBounds): {
-  selectedWeek: 1 | 2;
-  activeCycleWeek: 1 | 2;
-} {
-  try {
-    const raw = localStorage.getItem(SCHEDULE_WEEK_MEMORY_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as {
-        mondayKey?: string;
-        weekEpochIndex?: number;
-        activeWeek?: 1 | 2;
-        selectedWeek?: 1 | 2;
-      };
-      if (parsed && (parsed.activeWeek === 1 || parsed.activeWeek === 2)) {
-        if (parsed.mondayKey === bounds.mondayKey) {
-          // Same Monday-Sunday calendar week: remember exact week chosen by user
-          const remembered = parsed.selectedWeek === 1 || parsed.selectedWeek === 2
-            ? parsed.selectedWeek
-            : parsed.activeWeek;
-          return {
-            selectedWeek: remembered,
-            activeCycleWeek: remembered,
-          };
-        }
-        // Sunday night -> Monday 00:00 transition occurred! Advance week automatically
-        const prevIdx = typeof parsed.weekEpochIndex === 'number'
-          ? parsed.weekEpochIndex
-          : bounds.weekEpochIndex - 1;
-        const diffWeeks = Math.abs(bounds.weekEpochIndex - prevIdx);
-        const baseWeek = parsed.selectedWeek || parsed.activeWeek;
-        const nextWeek: 1 | 2 = diffWeeks % 2 === 1 ? (baseWeek === 1 ? 2 : 1) : baseWeek;
-        localStorage.setItem(
-          SCHEDULE_WEEK_MEMORY_KEY,
-          JSON.stringify({
-            mondayKey: bounds.mondayKey,
-            weekEpochIndex: bounds.weekEpochIndex,
-            activeWeek: nextWeek,
-            selectedWeek: nextWeek,
-          })
-        );
-        return {
-          selectedWeek: nextWeek,
-          activeCycleWeek: nextWeek,
-        };
-      }
-    }
-  } catch {}
-
-  const autoWeek: 1 | 2 = Math.abs(bounds.weekEpochIndex) % 2 === 0 ? 1 : 2;
-  try {
-    localStorage.setItem(
-      SCHEDULE_WEEK_MEMORY_KEY,
-      JSON.stringify({
-        mondayKey: bounds.mondayKey,
-        weekEpochIndex: bounds.weekEpochIndex,
-        activeWeek: autoWeek,
-        selectedWeek: autoWeek,
-      })
-    );
-  } catch {}
-  return {
-    selectedWeek: autoWeek,
-    activeCycleWeek: autoWeek,
-  };
-}
-
 interface ScheduleViewProps {
   onNavigateTab?: (tab: string) => void;
 }
@@ -206,6 +104,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
     updateScheduleItem,
     toggleScheduleItemCompletion,
     deleteScheduleItem,
+    lastScheduleAutoResetNotice,
+    dismissScheduleAutoResetNotice,
     templates,
     addTemplate,
     applyTemplateToStudent,
@@ -231,10 +131,10 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
 
   const [selectedDay, setSelectedDay] = useState<number>(0); // 0 = all
   const [selectedWeek, setSelectedWeekState] = useState<1 | 2>(() => {
-    return resolveRememberedOrAutoWeek(getCalendarWeekBounds()).selectedWeek;
+    return resolveScheduleWeekState(getCalendarWeekBounds()).selectedWeek;
   });
   const [activeCycleWeek, setActiveCycleWeek] = useState<1 | 2>(() => {
-    return resolveRememberedOrAutoWeek(getCalendarWeekBounds()).activeCycleWeek;
+    return resolveScheduleWeekState(getCalendarWeekBounds()).activeCycleWeek;
   });
 
   const setSelectedWeek = (week: 1 | 2) => {
@@ -242,24 +142,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
     setWeekBounds(currentBounds);
     setSelectedWeekState(week);
     setActiveCycleWeek(week);
-    try {
-      localStorage.setItem(
-        SCHEDULE_WEEK_MEMORY_KEY,
-        JSON.stringify({
-          mondayKey: currentBounds.mondayKey,
-          weekEpochIndex: currentBounds.weekEpochIndex,
-          activeWeek: week,
-          selectedWeek: week,
-        })
-      );
-    } catch {}
+    saveSelectedScheduleWeek(week, currentBounds);
   };
 
   // Watch for Sunday 23:59 -> Monday 00:00 transition in real time and sync remembered week
   React.useEffect(() => {
     const checkWeekTransition = () => {
       const freshBounds = getCalendarWeekBounds();
-      const resolved = resolveRememberedOrAutoWeek(freshBounds);
+      const resolved = resolveScheduleWeekState(freshBounds);
       setWeekBounds(prev => (prev.mondayKey !== freshBounds.mondayKey ? freshBounds : prev));
       setSelectedWeekState(prev => (prev !== resolved.selectedWeek ? resolved.selectedWeek : prev));
       setActiveCycleWeek(prev => (prev !== resolved.activeCycleWeek ? resolved.activeCycleWeek : prev));
@@ -728,8 +618,23 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ onNavigateTab }) => 
             </div>
           </div>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-            Şu an <strong>{selectedWeek}. Hafta ({weekBounds.dateRangeLabel})</strong> programı görüntüleniyor. Her Pazar gecesini Pazartesiye bağlayan gece (00:00) hafta otomatik olarak değişir ve seçili haftanız hatırlanır.
+            Şu an <strong>{selectedWeek}. Hafta ({weekBounds.dateRangeLabel})</strong> programı görüntüleniyor. Her Pazar gecesini Pazartesiye bağlayan gece (00:00) hafta otomatik değişir; <strong>2. Hafta Pazar → 1. Hafta Pazartesi</strong> geçişinde tüm tamamlandı kutucukları otomatik sıfırlanır.
           </p>
+          {lastScheduleAutoResetNotice && (
+            <div className="mt-2.5 p-2.5 px-3.5 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-bold flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>{lastScheduleAutoResetNotice}</span>
+              </div>
+              <button
+                onClick={dismissScheduleAutoResetNotice}
+                className="p-1 rounded-lg hover:bg-emerald-500/20 cursor-pointer shrink-0"
+                title="Bildirimi Kapat"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Action Buttons: Add Lesson, View Switch, Excel, Print */}

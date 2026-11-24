@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import {
   Flame,
+  Snowflake,
+  RotateCcw,
   CheckCircle2,
   Grid,
   List,
@@ -12,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { TeacherStudyTrackerView } from '../students/TeacherStudyTrackerView';
+import { getLocalDateKey } from '../../utils/scheduleCycle';
 
 export const StreakView: React.FC = () => {
   const {
@@ -20,7 +23,8 @@ export const StreakView: React.FC = () => {
     students,
     activities,
     addTeacherDailyStreak,
-    updateStudentStreakCount
+    updateStudentStreakCount,
+    restoreFrozenStreak
   } = useApp();
 
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -30,7 +34,7 @@ export const StreakView: React.FC = () => {
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [editingCount, setEditingCount] = useState<number>(0);
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getLocalDateKey();
 
   const handleAddDailyStreak = async (studentId: string, studentName: string) => {
     try {
@@ -43,6 +47,17 @@ export const StreakView: React.FC = () => {
       setTimeout(() => setActionNotice(null), 3000);
     } catch {
       setActionNotice('İşlem başarısız.');
+      setTimeout(() => setActionNotice(null), 3000);
+    }
+  };
+
+  const handleRestoreFrozenStreak = async (studentId: string, studentName: string) => {
+    try {
+      await restoreFrozenStreak(studentId);
+      setActionNotice(`${studentName} öğrencisinin dondurulan serisi geri getirildi!`);
+      setTimeout(() => setActionNotice(null), 3500);
+    } catch {
+      setActionNotice('Seri geri getirilemedi.');
       setTimeout(() => setActionNotice(null), 3000);
     }
   };
@@ -76,8 +91,9 @@ export const StreakView: React.FC = () => {
   const teacherStats = useMemo(() => {
     const total = students.length;
     const active = students.filter(s => s.streak.status === 'active' && s.streak.count > 0).length;
-    const inactive = total - active;
-    return { total, active, inactive };
+    const frozen = students.filter(s => s.streak.status === 'frozen' || s.streak.status === 'pending_recovery').length;
+    const inactive = Math.max(0, total - active - frozen);
+    return { total, active, frozen, inactive };
   }, [students]);
 
   return (
@@ -97,14 +113,18 @@ export const StreakView: React.FC = () => {
               Seri Yönetimi
             </h1>
             <p className="text-xs text-neutral-500 mt-0.5">
-              Günde en fazla 1 seri eklenebilir. Seri gün sayısını doğrudan düzenleyebilirsiniz.
+              2 gün üst üste seri arttırılmadığında seri otomatik dondurulur. Dondurulan serileri tek tıkla geri getirebilirsiniz.
             </p>
           </div>
 
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             <div className="px-3.5 py-2 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1.5">
               <Flame className="w-3.5 h-3.5 fill-current" />
               <span>Aktif: {teacherStats.active}</span>
+            </div>
+            <div className="px-3.5 py-2 rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 font-bold flex items-center gap-1.5 border border-cyan-500/20">
+              <Snowflake className="w-3.5 h-3.5" />
+              <span>Donduruldu: {teacherStats.frozen}</span>
             </div>
             <div className="px-3.5 py-2 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 font-bold">
               Serisi Yok: {teacherStats.inactive}
@@ -112,23 +132,43 @@ export const StreakView: React.FC = () => {
           </div>
         </div>
       ) : currentStudent ? (
-        <div className="p-6 rounded-2xl bg-white dark:bg-[#1C1C1E] border border-black/5 dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className={`p-6 rounded-2xl bg-white dark:bg-[#1C1C1E] border flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+          currentStudent.streak.status === 'frozen'
+            ? 'border-cyan-500/35 bg-cyan-500/[0.04]'
+            : 'border-black/5 dark:border-white/5'
+        }`}>
           <div className="flex items-center gap-4">
             <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
-              currentStudent.streak.count > 0
+              currentStudent.streak.status === 'frozen'
+                ? 'bg-cyan-500 text-white'
+                : currentStudent.streak.count > 0
                 ? 'bg-amber-500 text-white'
                 : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-400'
             }`}>
-              <Flame className="w-7 h-7 fill-current" />
+              {currentStudent.streak.status === 'frozen' ? (
+                <Snowflake className="w-7 h-7" />
+              ) : (
+                <Flame className="w-7 h-7 fill-current" />
+              )}
             </div>
             <div>
-              <div className="text-2xl sm:text-3xl font-extrabold text-neutral-900 dark:text-white font-mono">
-                {currentStudent.streak.count} Gün
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-2xl sm:text-3xl font-extrabold text-neutral-900 dark:text-white font-mono">
+                  {currentStudent.streak.count} Gün
+                </span>
+                {currentStudent.streak.status === 'frozen' && (
+                  <span className="px-2.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-600 dark:text-cyan-300 border border-cyan-500/30 text-xs font-extrabold flex items-center gap-1">
+                    <Snowflake className="w-3 h-3" />
+                    <span>Donduruldu</span>
+                  </span>
+                )}
               </div>
               <div className="text-xs text-neutral-500 mt-0.5">
-                {currentStudent.streak.lastActiveDate === todayStr && currentStudent.streak.count > 0
+                {currentStudent.streak.status === 'frozen'
+                  ? 'Serin 2 gün üst üste arttırılmadığı için donduruldu. Öğretmenin isterse serini geri getirebilir.'
+                  : currentStudent.streak.lastActiveDate === todayStr && currentStudent.streak.count > 0
                   ? 'Bugünkü seri tamamlandı'
-                  : '5 dk odaklanma = +1 gün seri (Günde 1 kez)'}
+                  : '5 dk odaklanma = +1 gün seri (Günde 1 kez • 2 gün üst üste arttırılmazsa dondurulur)'}
               </div>
             </div>
           </div>
@@ -169,11 +209,12 @@ export const StreakView: React.FC = () => {
                     const stCount = st.streak?.count || 0;
                     const stLastActive = st.streak?.lastActiveDate || '-';
                     const stdNo = st.studentNumber || st.pin.substring(0, 5);
-                    const isAddedToday = st.streak?.lastActiveDate === todayStr && stCount > 0;
+                    const isFrozen = st.streak?.status === 'frozen' || st.streak?.status === 'pending_recovery';
+                    const isAddedToday = !isFrozen && st.streak?.lastActiveDate === todayStr && stCount > 0;
                     const isEditing = editingStudentId === st.id;
 
                     return (
-                      <tr key={st.id} className="hover:bg-neutral-50/60 dark:hover:bg-neutral-800/40 transition-colors">
+                      <tr key={st.id} className={`hover:bg-neutral-50/60 dark:hover:bg-neutral-800/40 transition-colors ${isFrozen ? 'bg-cyan-500/[0.03]' : ''}`}>
                         <td className="p-3 pl-4">
                           <div className="flex items-center gap-2.5">
                             <div className="w-7 h-7 rounded-lg bg-neutral-800 dark:bg-neutral-700 text-white font-bold text-[11px] flex items-center justify-center shrink-0">
@@ -215,13 +256,23 @@ export const StreakView: React.FC = () => {
                               </button>
                             </div>
                           ) : (
-                            <div className="inline-flex items-center gap-2">
-                              <span className={`inline-flex items-center gap-1 font-mono font-bold ${
-                                stCount > 0 ? 'text-amber-500' : 'text-neutral-400'
-                              }`}>
-                                <Flame className={`w-3.5 h-3.5 ${stCount > 0 ? 'fill-amber-500' : ''}`} />
-                                <span>{stCount} Gün</span>
-                              </span>
+                            <div className="inline-flex items-center gap-2 flex-wrap">
+                              {isFrozen ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-cyan-500/15 text-cyan-600 dark:text-cyan-300 border border-cyan-500/25 font-mono font-bold">
+                                  <Snowflake className="w-3.5 h-3.5" />
+                                  <span>{stCount} Gün</span>
+                                  <span className="font-sans text-[10px] font-extrabold">
+                                    Donduruldu{(st.streak?.frozenDays || 0) >= 2 ? ` (${st.streak.frozenDays}g)` : ''}
+                                  </span>
+                                </span>
+                              ) : (
+                                <span className={`inline-flex items-center gap-1 font-mono font-bold ${
+                                  stCount > 0 ? 'text-amber-500' : 'text-neutral-400'
+                                }`}>
+                                  <Flame className={`w-3.5 h-3.5 ${stCount > 0 ? 'fill-amber-500' : ''}`} />
+                                  <span>{stCount} Gün</span>
+                                </span>
+                              )}
                               <button
                                 onClick={() => {
                                   setEditingStudentId(st.id);
@@ -241,7 +292,16 @@ export const StreakView: React.FC = () => {
                         </td>
 
                         <td className="p-3 pr-4 text-right">
-                          {isAddedToday ? (
+                          {isFrozen ? (
+                            <button
+                              onClick={() => handleRestoreFrozenStreak(st.id, st.name)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs transition-all active:scale-95 cursor-pointer shadow-xs"
+                              title="Dondurulmuş seriyi aktifleştir ve geri getir"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              <span>Seriyi Geri Getir</span>
+                            </button>
+                          ) : isAddedToday ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-400 font-semibold text-[11px]">
                               <Check className="w-3 h-3 text-emerald-500" />
                               <span>Bugün Eklendi</span>

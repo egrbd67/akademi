@@ -28,13 +28,15 @@ import {
   ArrowUpDown,
   ListOrdered,
   LayoutGrid,
-  List
+  List,
+  RotateCcw
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Student, ScheduleItem, Homework, TrialExam, ExamType } from '../../types';
 import { ClassroomsModal } from '../classrooms/ClassroomsModal';
 import { TeacherStudyTrackerView } from '../students/TeacherStudyTrackerView';
 import { getThemeStyles } from '../theme/ThemeCustomizerModal';
+import { getLocalDateKey } from '../../utils/scheduleCycle';
 
 interface UserManagementPanelProps {
   onNavigateTab: (tab: string) => void;
@@ -62,11 +64,12 @@ export const UserManagementPanel: React.FC<UserManagementPanelProps> = ({ onNavi
     focusSessions,
     addTeacherDailyStreak,
     updateStudentStreakCount,
+    restoreFrozenStreak,
     boxTheme
   } = useApp();
 
   const themeStyles = getThemeStyles(boxTheme);
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getLocalDateKey();
 
   // View mode: Grid Cards vs List View vs Ranking Table vs Real-Time Audit Feed vs Study Tracker
   const [viewMode, setViewMode] = useState<'grid' | 'list' | 'ranking' | 'activities' | 'study_tracker'>('grid');
@@ -851,11 +854,25 @@ export const UserManagementPanel: React.FC<UserManagementPanelProps> = ({ onNavi
                               <Flame className="w-3.5 h-3.5 fill-amber-500" />
                               <span>{item.streakDays} Gün</span>
                             </span>
-                          ) : st.streak.status === 'frozen' ? (
-                            <span className="inline-flex items-center gap-1 font-bold text-cyan-500 text-xs">
-                              <Snowflake className="w-3.5 h-3.5" />
-                              <span>Donduruldu</span>
-                            </span>
+                          ) : st.streak.status === 'frozen' || st.streak.status === 'pending_recovery' ? (
+                            <div className="inline-flex items-center gap-1.5 flex-wrap justify-center">
+                              <span className="inline-flex items-center gap-1 font-bold text-cyan-500 text-xs">
+                                <Snowflake className="w-3.5 h-3.5" />
+                                <span>{item.streakDays}G Donduruldu</span>
+                              </span>
+                              <button
+                                onClick={async () => {
+                                  await restoreFrozenStreak(st.id);
+                                  setActionNotice(`${st.name} öğrencisinin dondurulan serisi geri getirildi.`);
+                                  setTimeout(() => setActionNotice(null), 3000);
+                                }}
+                                className="px-2 py-0.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-[10px] inline-flex items-center gap-1 cursor-pointer"
+                                title="Dondurulan seriyi geri getir"
+                              >
+                                <RotateCcw className="w-2.5 h-2.5" />
+                                <span>Geri Getir</span>
+                              </button>
+                            </div>
                           ) : (
                             <span className="text-neutral-400 text-xs">0 Gün</span>
                           )}
@@ -1052,31 +1069,54 @@ export const UserManagementPanel: React.FC<UserManagementPanelProps> = ({ onNavi
                       </td>
 
                       <td className="py-3 px-3 text-center">
-                        <div className="inline-flex items-center gap-1.5">
-                          <span className="inline-flex items-center gap-1 font-bold text-amber-500 text-xs font-mono">
-                            <Flame className="w-3.5 h-3.5 fill-amber-500" />
-                            <span>{st.streak?.count || 0}G</span>
-                          </span>
-                          {st.streak?.lastActiveDate === todayStr && (st.streak?.count || 0) > 0 ? (
-                            <span className="px-2 py-0.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-400 font-semibold text-[10px]">
-                              Bugün Eklendi
-                            </span>
+                        <div className="inline-flex items-center gap-1.5 flex-wrap justify-center">
+                          {st.streak?.status === 'frozen' || st.streak?.status === 'pending_recovery' ? (
+                            <>
+                              <span className="inline-flex items-center gap-1 font-bold text-cyan-500 text-xs font-mono">
+                                <Snowflake className="w-3.5 h-3.5" />
+                                <span>{st.streak?.count || 0}G</span>
+                              </span>
+                              <button
+                                onClick={async () => {
+                                  await restoreFrozenStreak(st.id);
+                                  setActionNotice(`${st.name} öğrencisinin dondurulan serisi geri getirildi.`);
+                                  setTimeout(() => setActionNotice(null), 3000);
+                                }}
+                                className="px-2 py-0.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-[10px] inline-flex items-center gap-1 cursor-pointer"
+                                title="Dondurulan seriyi geri getir"
+                              >
+                                <RotateCcw className="w-2.5 h-2.5" />
+                                <span>Geri Getir</span>
+                              </button>
+                            </>
                           ) : (
-                            <button
-                              onClick={async () => {
-                                const added = await addTeacherDailyStreak(st.id);
-                                if (added) {
-                                  setActionNotice(`${st.name}: +1 seri eklendi.`);
-                                } else {
-                                  setActionNotice(`${st.name} için bugün zaten seri eklenmiş.`);
-                                }
-                                setTimeout(() => setActionNotice(null), 3000);
-                              }}
-                              className="px-2 py-0.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-600 dark:text-amber-400 font-bold text-[10px] cursor-pointer"
-                              title="+1 Günlük Seri Ekle"
-                            >
-                              +1 Seri
-                            </button>
+                            <>
+                              <span className="inline-flex items-center gap-1 font-bold text-amber-500 text-xs font-mono">
+                                <Flame className="w-3.5 h-3.5 fill-amber-500" />
+                                <span>{st.streak?.count || 0}G</span>
+                              </span>
+                              {st.streak?.lastActiveDate === todayStr && (st.streak?.count || 0) > 0 ? (
+                                <span className="px-2 py-0.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-400 font-semibold text-[10px]">
+                                  Bugün Eklendi
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={async () => {
+                                    const added = await addTeacherDailyStreak(st.id);
+                                    if (added) {
+                                      setActionNotice(`${st.name}: +1 seri eklendi.`);
+                                    } else {
+                                      setActionNotice(`${st.name} için bugün zaten seri eklenmiş.`);
+                                    }
+                                    setTimeout(() => setActionNotice(null), 3000);
+                                  }}
+                                  className="px-2 py-0.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-600 dark:text-amber-400 font-bold text-[10px] cursor-pointer"
+                                  title="+1 Günlük Seri Ekle"
+                                >
+                                  +1 Seri
+                                </button>
+                              )}
+                            </>
                           )}
                         </div>
                       </td>
@@ -1445,7 +1485,20 @@ export const UserManagementPanel: React.FC<UserManagementPanelProps> = ({ onNavi
                         <span>Düzenle</span>
                       </button>
 
-                      {st.streak?.lastActiveDate === todayStr && (st.streak?.count || 0) > 0 ? (
+                      {st.streak?.status === 'frozen' || st.streak?.status === 'pending_recovery' ? (
+                        <button
+                          onClick={async () => {
+                            await restoreFrozenStreak(st.id);
+                            setActionNotice(`${st.name} öğrencisinin dondurulan serisi geri getirildi.`);
+                            setTimeout(() => setActionNotice(null), 3000);
+                          }}
+                          className="px-2 py-0.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white font-bold flex items-center gap-1 text-[11px] cursor-pointer"
+                          title="Dondurulan seriyi geri getir"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>Seriyi Geri Getir ({st.streak?.count || 0}G)</span>
+                        </button>
+                      ) : st.streak?.lastActiveDate === todayStr && (st.streak?.count || 0) > 0 ? (
                         <span className="text-neutral-400 font-semibold flex items-center gap-1 text-[11px]">
                           <Flame className="w-3 h-3 fill-amber-500 text-amber-500" />
                           <span>Bugün Eklendi ({st.streak?.count || 0}G)</span>
